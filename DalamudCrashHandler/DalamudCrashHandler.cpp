@@ -14,12 +14,15 @@
 #define NOMINMAX
 #include <Windows.h>
 
+#include <clrdata.h>
+#include <comdef.h>
 #include <CommCtrl.h>
-#include <DbgHelp.h>
+#include <DbgEng.h>
 #include <minidumpapiset.h>
 #include <PathCch.h>
 #include <Psapi.h>
 #include <shellapi.h>
+#include <ShlObj.h>
 #include <winhttp.h>
 
 #pragma comment(lib, "comctl32.lib")
@@ -28,8 +31,28 @@
 #include "resource.h"
 #include "../Dalamud.Boot/crashhandler_shared.h"
 
+typedef unsigned int mdToken;
+typedef unsigned int mdTypeDef;
+typedef unsigned int mdMethodDef;
+typedef unsigned int mdFieldDef;
+typedef unsigned long CorElementType;
+
+#include "xclrdata/xclrdata_h.h"
+#include "xclrdata/xclrdata_i.c"
+
+_COM_SMARTPTR_TYPEDEF(IDebugClient, __uuidof(IDebugClient));
+_COM_SMARTPTR_TYPEDEF(IDebugControl4, __uuidof(IDebugControl4));
+_COM_SMARTPTR_TYPEDEF(IDebugSystemObjects, __uuidof(IDebugSystemObjects));
+_COM_SMARTPTR_TYPEDEF(IDebugSymbols3, __uuidof(IDebugSymbols3));
+_COM_SMARTPTR_TYPEDEF(IXCLRDataProcess, __uuidof(IXCLRDataProcess));
+
 HANDLE g_hProcess = nullptr;
-bool g_bSymbolsAvailable = false;
+std::filesystem::path g_assetsDirectory;
+IXCLRDataProcessPtr g_pClrDataProcess;
+IDebugClientPtr g_pDebugClient;
+IDebugControl4Ptr g_pDebugControl;
+IDebugSymbols3Ptr g_pDebugSymbols;
+IDebugSystemObjectsPtr g_pDebugSystemObjects;
 
 const std::map<HMODULE, size_t>& get_remote_modules() {
     static const auto data = [] {
@@ -38,7 +61,7 @@ const std::map<HMODULE, size_t>& get_remote_modules() {
         std::vector<HMODULE> buf(8192);
         for (size_t i = 0; i < 64; i++) {
             if (DWORD needed; !EnumProcessModules(g_hProcess, &buf[0], static_cast<DWORD>(std::span(buf).size_bytes()), &needed)) {
-                std::cerr << std::format("EnumProcessModules error: 0x{:x}", GetLastError()) << std::endl; 
+                std::cerr << std::format("EnumProcessModules error: 0x{:x}", GetLastError()) << std::endl;
                 break;
             } else if (needed > std::span(buf).size_bytes()) {
                 buf.resize(needed / sizeof(HMODULE) + 16);
@@ -63,7 +86,7 @@ const std::map<HMODULE, size_t>& get_remote_modules() {
 
             data[hModule] = nth64.OptionalHeader.SizeOfImage;
         }
-        
+
         return data;
     }();
 
@@ -116,25 +139,17 @@ bool is_ffxiv_address(const wchar_t* module_name, const DWORD64 address) {
     return false;
 }
 
-bool get_sym_from_addr(const DWORD64 address, DWORD64& displacement, std::wstring& symbol_name) {
-    if (!g_bSymbolsAvailable)
-        return false;
-
-    union {
-        char buffer[sizeof(SYMBOL_INFOW) + MAX_SYM_NAME * sizeof(wchar_t)]{};
-        SYMBOL_INFOW symbol;
-    };
-    symbol.SizeOfStruct = sizeof(SYMBOL_INFO);
-    symbol.MaxNameLen = MAX_SYM_NAME;
-
-    if (SymFromAddrW(g_hProcess, address, &displacement, &symbol) && symbol.Name[0]) {
-        symbol_name = symbol.Name;
-        return true;
-    }
-    return false;
-}
-
 std::wstring to_address_string(const DWORD64 address, const bool try_ptrderef = true) {
+    std::wstring buf(1024, L'\0');
+    if (g_pClrDataProcess) {
+        CLRDATA_ADDRESS displacement;
+        ULONG32 len;
+        if (SUCCEEDED(g_pClrDataProcess->GetRuntimeNameByAddress(address, 0, 1024, &len, &buf[0], &displacement))) {
+            buf.resize(len ? len - 1 : 0);
+            return std::format(L"CLR:{:X}\t({}+{:X})", address, buf, displacement);
+        }
+    }
+
     DWORD64 module_base;
     std::filesystem::path module_path;
     bool is_mod_addr = get_module_file_and_base(address, module_base, module_path);
@@ -145,10 +160,15 @@ std::wstring to_address_string(const DWORD64 address, const bool try_ptrderef = 
     }
 
     std::wstring addr_str = is_mod_addr ? std::format(L"{}+{:X}", module_path.filename().c_str(), address - module_base) : std::format(L"{:X}", address);
-
-    DWORD64 displacement;
-    if (std::wstring symbol; get_sym_from_addr(address, displacement, symbol))
-        return std::format(L"{}\t({})", addr_str, displacement != 0 ? std::format(L"{}+0x{:X}", symbol, displacement) : std::format(L"{}", symbol));
+    {
+        DWORD64 displacement;
+        ULONG len;
+        buf.resize(2000 /*MAX_SYM_NAME*/, L'\0');
+        if (SUCCEEDED(g_pDebugSymbols->GetNameByOffsetWide(address, &buf[0], static_cast<ULONG>(buf.size()), &len, &displacement))) {
+            buf.resize(len ? len - 1 : 0);
+            return std::format(L"{}\t({}+{:X})", addr_str, buf, displacement);
+        }
+    }
     return value != 0 ? std::format(L"{} [{}]", addr_str, to_address_string(value, false)) : addr_str;
 }
 
@@ -159,15 +179,15 @@ void print_exception_info(HANDLE hThread, const EXCEPTION_POINTERS& ex, const CO
         size_t read;
         exRecs.emplace_back();
         for (auto pRemoteExRec = ex.ExceptionRecord;
-             pRemoteExRec
-             && rec_index < 64
-             && ReadProcessMemory(g_hProcess, pRemoteExRec, &exRecs.back(), sizeof exRecs.back(), &read)
-             && read >= offsetof(EXCEPTION_RECORD, ExceptionInformation)
-             && read >= static_cast<size_t>(reinterpret_cast<const char*>(&exRecs.back().ExceptionInformation[exRecs.back().NumberParameters]) - reinterpret_cast<const char*>(&exRecs.back()));
-             rec_index++) {
+            pRemoteExRec
+            && rec_index < 64
+            && ReadProcessMemory(g_hProcess, pRemoteExRec, &exRecs.back(), sizeof exRecs.back(), &read)
+            && read >= offsetof(EXCEPTION_RECORD, ExceptionInformation)
+            && read >= static_cast<size_t>(reinterpret_cast<const char*>(&exRecs.back().ExceptionInformation[exRecs.back().NumberParameters]) - reinterpret_cast<const char*>(&exRecs.back()));
+            rec_index++) {
 
             log << std::format(L"\nException Info #{}\n", rec_index);
-            log << std::format(L"Address: {:X}\n", exRecs.back().ExceptionCode);
+            log << std::format(L"Code: {:X}\n", exRecs.back().ExceptionCode);
             log << std::format(L"Flags: {:X}\n", exRecs.back().ExceptionFlags);
             log << std::format(L"Address: {:X}\n", reinterpret_cast<size_t>(exRecs.back().ExceptionAddress));
             if (!exRecs.back().NumberParameters)
@@ -185,47 +205,69 @@ void print_exception_info(HANDLE hThread, const EXCEPTION_POINTERS& ex, const CO
         exRecs.pop_back();
     }
 
-    log << L"\nCall Stack\n{";
+    const auto tid = GetThreadId(hThread);
 
-    STACKFRAME64 sf{};
-    sf.AddrPC.Offset = ctx.Rip;
-    sf.AddrPC.Mode = AddrModeFlat;
-    sf.AddrStack.Offset = ctx.Rsp;
-    sf.AddrStack.Mode = AddrModeFlat;
-    sf.AddrFrame.Offset = ctx.Rbp;
-    sf.AddrFrame.Mode = AddrModeFlat;
-    int frame_index = 0;
+    try {
+        ULONG tidl;
+        if (const auto hr = g_pDebugSystemObjects->GetThreadIdBySystemId(tid, &tidl); FAILED(hr))
+            throw _com_error(hr);
+        if (const auto hr = g_pDebugSystemObjects->SetCurrentThreadId(tidl); FAILED(hr))
+            throw _com_error(hr);
 
-    log << std::format(L"\n  [{}]\t{}", frame_index++, to_address_string(sf.AddrPC.Offset, false));
+        const auto MaxFrameAndContextCount = 512;
+        ULONG framesFilled;
 
-    const auto appendContextToLog = [&](const CONTEXT& ctxWalk) {
-        log << std::format(L"\n  [{}]\t{}", frame_index++, to_address_string(sf.AddrPC.Offset, false));
-    };
+        DEBUG_STACK_FRAME firstFrame;
+        if (const auto hr = g_pDebugControl->GetContextStackTrace((void*)&ctx, sizeof ctx, &firstFrame, 1, nullptr, sizeof ctx, sizeof ctx, &framesFilled); FAILED(hr) || !framesFilled)
+            throw _com_error(hr);
 
-    const auto tryStackWalk = [&] {
-        __try {
-            CONTEXT ctxWalk = ctx;
-            do {
-                if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, g_hProcess, hThread, &sf, &ctxWalk, nullptr, &SymFunctionTableAccess64, &SymGetModuleBase64, nullptr))
-                    break;
+        log << L"\nCall Stack\n{";
 
-                appendContextToLog(ctxWalk);
+        std::vector<DEBUG_STACK_FRAME> frames;
+        frames.resize(MaxFrameAndContextCount);
+        if (const auto hr = g_pDebugControl->GetStackTrace(firstFrame.FrameOffset, firstFrame.StackOffset, firstFrame.InstructionOffset, &frames[0], MaxFrameAndContextCount, &framesFilled); FAILED(hr) || !framesFilled)
+            throw _com_error(hr);
 
-            } while (sf.AddrReturn.Offset != 0 && sf.AddrPC.Offset != sf.AddrReturn.Offset);
-            return true;
-        } __except(EXCEPTION_EXECUTE_HANDLER) {
-            return false;
-        }
-    };
+        frames.resize(framesFilled);
+        for (const auto& frame : frames)
+            log << std::format(L"\n  [{}]\t{}", frame.FrameNumber, to_address_string(frame.InstructionOffset, false));
 
-    if (!tryStackWalk())
-        log << L"\n  Access violation while walking up the stack.";
-
-    log << L"\n}\n";
+        log << L"\n}\n";
+    } catch (const _com_error& e) {
+        log << std::format(L"Failed to read call stack: hr=0x{:08x} message={}\n", e.Error(), e.ErrorMessage());
+    }
 }
 
-void print_exception_info_extended(const EXCEPTION_POINTERS& ex, const CONTEXT& ctx, std::wostringstream& log)
-{
+void attach_debugger() {
+    const auto pid = GetProcessId(g_hProcess);
+
+    try {
+        if (const auto hr = DebugCreate(__uuidof(IDebugClient), (void**)&g_pDebugClient); FAILED(hr))
+            throw _com_error(hr);
+        if (const auto hr = g_pDebugClient->AttachProcess(0, pid, DEBUG_ATTACH_NONINVASIVE | DEBUG_ATTACH_NONINVASIVE_NO_SUSPEND); FAILED(hr))
+            throw _com_error(hr);
+
+        if (const auto hr = g_pDebugClient.QueryInterface(__uuidof(IDebugControl4), &g_pDebugControl); FAILED(hr))
+            throw _com_error(hr);
+
+        g_pDebugControl->SetExecutionStatus(DEBUG_STATUS_GO);
+        if (const auto hr = g_pDebugControl->WaitForEvent(DEBUG_WAIT_DEFAULT, INFINITE); FAILED(hr))
+            throw _com_error(hr);
+
+        if (const auto hr = g_pDebugClient.QueryInterface(__uuidof(IDebugSymbols3), &g_pDebugSymbols); FAILED(hr))
+            throw _com_error(hr);
+
+        g_pDebugSymbols->AppendSymbolPathWide((g_assetsDirectory / "UIRes" / "pdb").c_str());
+
+        if (const auto hr = g_pDebugClient.QueryInterface(__uuidof(IDebugSystemObjects), &g_pDebugSystemObjects); FAILED(hr))
+            throw _com_error(hr);
+    } catch (const _com_error& e) {
+        std::wcerr << std::format(L"Failed to read call stack: hr=0x{:08x} message={}\n", static_cast<unsigned int>(e.Error()), e.ErrorMessage()) << std::endl;
+        throw std::exception("Debugger attach failure");
+    }
+}
+
+void print_exception_info_extended(const EXCEPTION_POINTERS& ex, const CONTEXT& ctx, std::wostringstream& log) {
     log << L"\nRegisters\n{";
 
     log << std::format(L"\n  RAX:\t{}", to_address_string(ctx.Rax));
@@ -249,15 +291,17 @@ void print_exception_info_extended(const EXCEPTION_POINTERS& ex, const CONTEXT& 
 
     log << L"\n}" << std::endl;
 
-    if(0x10000 < ctx.Rsp && ctx.Rsp < 0x7FFFFFFE0000)
-    {
+    if (0x10000 < ctx.Rsp && ctx.Rsp < 0x7FFFFFFE0000) {
         log << L"\nStack\n{";
 
-        DWORD64 stackData[16];
-        size_t read;
-        ReadProcessMemory(g_hProcess, reinterpret_cast<void*>(ctx.Rsp), stackData, sizeof stackData, &read);
-        for(DWORD64 i = 0; i < 16 && i * sizeof(size_t) < read; i++)
-            log << std::format(L"\n  [RSP+{:X}]\t{}", i * 8, to_address_string(stackData[i]));
+        std::vector<DWORD64> stackData;
+        stackData.resize(64);
+        size_t read = 0;
+        ReadProcessMemory(g_hProcess, reinterpret_cast<void*>(ctx.Rsp), &stackData[0], std::span(stackData).size_bytes(), &read);
+        for (DWORD64 i = 0; i < stackData.size() && i * sizeof(size_t) < read; i++) {
+            if (stackData[i])
+                log << std::format(L"\n  [RSP+{:X}]\t{}", i * 8, to_address_string(stackData[i]));
+        }
 
         log << L"\n}\n";
     }
@@ -272,7 +316,7 @@ void print_exception_info_extended(const EXCEPTION_POINTERS& ex, const CONTEXT& 
 
 std::wstring escape_shell_arg(const std::wstring& arg) {
     // https://docs.microsoft.com/en-us/archive/blogs/twistylittlepassagesallalike/everyone-quotes-command-line-arguments-the-wrong-way
-    
+
     std::wstring res;
     if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
         res.append(arg);
@@ -314,8 +358,7 @@ enum {
     IdButtonExit = IDCANCEL,
 };
 
-void restart_game_using_injector(int nRadioButton, const std::vector<std::wstring>& launcherArgs)
-{
+void restart_game_using_injector(int nRadioButton, const std::vector<std::wstring>& launcherArgs) {
     std::wstring pathStr(PATHCCH_MAX_CCH, L'\0');
     pathStr.resize(GetModuleFileNameExW(GetCurrentProcess(), GetModuleHandleW(nullptr), &pathStr[0], PATHCCH_MAX_CCH));
 
@@ -325,13 +368,13 @@ void restart_game_using_injector(int nRadioButton, const std::vector<std::wstrin
     switch (nRadioButton) {
         case IdRadioRestartWithout3pPlugins:
             args.emplace_back(L"--no-3rd-plugin");
-        break;
+            break;
         case IdRadioRestartWithoutPlugins:
             args.emplace_back(L"--no-plugin");
-        break;
+            break;
         case IdRadioRestartWithoutDalamud:
             args.emplace_back(L"--without-dalamud");
-        break;
+            break;
     }
     args.emplace_back(L"--");
     args.insert(args.end(), launcherArgs.begin(), launcherArgs.end());
@@ -360,6 +403,85 @@ void restart_game_using_injector(int nRadioButton, const std::vector<std::wstrin
     }
 }
 
+void try_attach_xclr() {
+    if (g_pClrDataProcess)
+        return;
+
+    std::filesystem::path runtimeDir;
+
+    std::wstring buffer;
+    buffer.resize(1 + GetEnvironmentVariableW(L"DALAMUD_RUNTIME", nullptr, 0));
+    buffer.resize(GetEnvironmentVariableW(L"DALAMUD_RUNTIME", &buffer[0], static_cast<DWORD>(buffer.size())));
+
+    if (buffer.empty()) {
+        wchar_t* _appdata;
+        SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr, &_appdata);
+        runtimeDir = std::filesystem::path(_appdata) / "XIVLauncher" / "runtime";
+    } else {
+        runtimeDir = buffer;
+    }
+
+    const auto hCorDbgIface = LoadLibraryW((runtimeDir / "shared" / "Microsoft.NETCore.App" / "5.0.17" / "mscordaccore.dll").c_str());
+    if (!hCorDbgIface)
+        return;
+
+    const auto pfnCLRDataCreateInstance = reinterpret_cast<decltype(&CLRDataCreateInstance)>(GetProcAddress(hCorDbgIface, "CLRDataCreateInstance"));
+    if (!pfnCLRDataCreateInstance)
+        return;
+
+    class MyDataTarget : public ICLRDataTarget {
+    public:
+        ~MyDataTarget() = default;
+        HRESULT QueryInterface(const IID& riid, void** ppvObject) override {
+            if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ICLRDataTarget)) {
+                this->AddRef();
+                *ppvObject = this;
+                return S_OK;
+            }
+            *ppvObject = nullptr;
+            return E_NOINTERFACE;
+        }
+        ULONG AddRef() override { return 1; }
+        ULONG Release() override { return 0; }
+        HRESULT GetMachineType(ULONG32* machineType) override { *machineType = IMAGE_FILE_MACHINE_AMD64; return S_OK; }
+        HRESULT GetPointerSize(ULONG32* pointerSize) override { *pointerSize = sizeof(void*); return S_OK; }
+        HRESULT GetImageBase(LPCWSTR imagePath, CLRDATA_ADDRESS* baseAddress) override {
+            const auto requestedPath = std::filesystem::path(imagePath);
+            for (const auto& [hModule, path] : get_remote_module_paths()) {
+                if (requestedPath.has_parent_path() && _wcsicmp(requestedPath.c_str(), path.c_str()) == 0) {
+                    *baseAddress = reinterpret_cast<CLRDATA_ADDRESS>(hModule);
+                    return S_OK;
+                }
+                if (!requestedPath.has_parent_path() && _wcsicmp(requestedPath.c_str(), path.filename().c_str()) == 0) {
+                    *baseAddress = reinterpret_cast<CLRDATA_ADDRESS>(hModule);
+                    return S_OK;
+                }
+            }
+            return E_INVALIDARG;
+        }
+        HRESULT ReadVirtual(CLRDATA_ADDRESS address, BYTE* buffer, ULONG32 bytesRequested, ULONG32* bytesRead) override {
+            SIZE_T bytesReadSizeT{};
+            *bytesRead = 0;
+            if (!ReadProcessMemory(g_hProcess, reinterpret_cast<void*>(address), buffer, bytesRequested, &bytesReadSizeT))
+                return HRESULT_FROM_WIN32(GetLastError());
+            *bytesRead = static_cast<ULONG32>(bytesReadSizeT);
+            return S_OK;
+        }
+        HRESULT WriteVirtual(CLRDATA_ADDRESS address, BYTE* buffer, ULONG32 bytesRequested, ULONG32* bytesWritten) override { return E_NOTIMPL; }
+        HRESULT GetTLSValue(ULONG32 threadID, ULONG32 index, CLRDATA_ADDRESS* value) override { return E_NOTIMPL; }
+        HRESULT SetTLSValue(ULONG32 threadID, ULONG32 index, CLRDATA_ADDRESS value) override { return E_NOTIMPL; }
+        HRESULT GetCurrentThreadID(ULONG32* threadID) override { return E_NOTIMPL; }
+        HRESULT GetThreadContext(ULONG32 threadID, ULONG32 contextFlags, ULONG32 contextSize, BYTE* context) override { return E_NOTIMPL; }
+        HRESULT SetThreadContext(ULONG32 threadID, ULONG32 contextSize, BYTE* context) override { return E_NOTIMPL; }
+        HRESULT Request(ULONG32 reqCode, ULONG32 inBufferSize, BYTE* inBuffer, ULONG32 outBufferSize, BYTE* outBuffer) override { return E_NOTIMPL; }
+    };
+
+    static MyDataTarget myDataTarget;
+
+    if (const auto status = pfnCLRDataCreateInstance(IID_IXCLRDataProcess, &myDataTarget, reinterpret_cast<void**>(&g_pClrDataProcess)); status != S_OK)
+        return;
+}
+
 int main() {
     enum crash_handler_special_exit_codes {
         InvalidParameter = -101,
@@ -367,9 +489,9 @@ int main() {
     };
 
     HANDLE hPipeRead = nullptr;
-    std::filesystem::path assetDir, logDir;
+    std::filesystem::path logDir;
     std::optional<std::vector<std::wstring>> launcherArgs;
-    
+
     std::vector<std::wstring> args;
     if (int argc = 0; const auto argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
         for (auto i = 0; i < argc; i++)
@@ -385,7 +507,7 @@ int main() {
         } else if (constexpr wchar_t pwszArgPrefix[] = L"--exception-info-pipe-read-handle="; arg.starts_with(pwszArgPrefix)) {
             hPipeRead = reinterpret_cast<HANDLE>(std::wcstoull(&arg[ARRAYSIZE(pwszArgPrefix) - 1], nullptr, 0));
         } else if (constexpr wchar_t pwszArgPrefix[] = L"--asset-directory="; arg.starts_with(pwszArgPrefix)) {
-            assetDir = arg.substr(ARRAYSIZE(pwszArgPrefix) - 1);
+            g_assetsDirectory = arg.substr(ARRAYSIZE(pwszArgPrefix) - 1);
         } else if (constexpr wchar_t pwszArgPrefix[] = L"--log-directory="; arg.starts_with(pwszArgPrefix)) {
             logDir = arg.substr(ARRAYSIZE(pwszArgPrefix) - 1);
         } else if (arg == L"--") {
@@ -406,9 +528,14 @@ int main() {
         return InvalidParameter;
     }
 
+    if (g_assetsDirectory.empty()) {
+        std::wcerr << L"Assets directory not specified" << std::endl;
+        return InvalidParameter;
+    }
+
     const auto dwProcessId = GetProcessId(g_hProcess);
-    if (!dwProcessId){
-        std::wcerr << L"Target process not specified" << std::endl;
+    if (!dwProcessId) {
+        std::wcerr << L"Target process handle is invalid" << std::endl;
         return InvalidParameter;
     }
 
@@ -442,16 +569,8 @@ int main() {
 
         std::cout << "Crash triggered" << std::endl;
 
-        if (g_bSymbolsAvailable) {
-            SymRefreshModuleList(g_hProcess);
-        } else if (g_bSymbolsAvailable = SymInitialize(g_hProcess, nullptr, true); g_bSymbolsAvailable) {
-            if (!assetDir.empty()) {
-                if (!SymSetSearchPathW(g_hProcess, std::format(L".;{}", (assetDir / "UIRes" / "pdb").wstring()).c_str()))
-                    std::wcerr << std::format(L"SymSetSearchPathW error: 0x{:x}", GetLastError()) << std::endl;
-            }
-        } else {
-            std::wcerr << std::format(L"SymInitialize error: 0x{:x}", GetLastError()) << std::endl;
-        }
+        try_attach_xclr();
+        attach_debugger();
 
         std::wstring stackTrace(exinfo.dwStackTraceLength, L'\0');
         if (exinfo.dwStackTraceLength) {
@@ -481,7 +600,7 @@ int main() {
                 }
 
                 std::unique_ptr<std::remove_pointer_t<HANDLE>, decltype(&CloseHandle)> hDumpFilePtr(hDumpFile, &CloseHandle);
-                if (!MiniDumpWriteDump(g_hProcess, dwProcessId, hDumpFile, static_cast<MINIDUMP_TYPE>(MiniDumpWithDataSegs | MiniDumpWithModuleHeaders), &mdmp_info, nullptr, nullptr)) {
+                if (false && !MiniDumpWriteDump(g_hProcess, dwProcessId, hDumpFile, static_cast<MINIDUMP_TYPE>(MiniDumpWithDataSegs | MiniDumpWithModuleHeaders), &mdmp_info, nullptr, nullptr)) {
                     std::wcerr << (dumpError = std::format(L"MiniDumpWriteDump(0x{:x}, {}, 0x{:x}({}), MiniDumpWithFullMemory, ..., nullptr, nullptr) error: 0x{:x}", reinterpret_cast<size_t>(g_hProcess), dwProcessId, reinterpret_cast<size_t>(hDumpFile), dumpPath.wstring(), GetLastError())) << std::endl;
                     break;
                 }
@@ -502,7 +621,6 @@ int main() {
         log << L"Time: " << std::chrono::zoned_time{ std::chrono::current_zone(), std::chrono::system_clock::now() } << std::endl;
         log << L"\n" << stackTrace << std::endl;
 
-        SymRefreshModuleList(GetCurrentProcess());
         print_exception_info(exinfo.hThreadHandle, exinfo.ExceptionPointers, exinfo.ContextRecord, log);
         auto window_log_str = log.str();
         print_exception_info_extended(exinfo.ExceptionPointers, exinfo.ContextRecord, log);
@@ -513,14 +631,16 @@ int main() {
         if (!getenv("DALAMUD_NO_METRIC")) {
             auto url = std::format(L"/Dalamud/Metric/ReportCrash/?lt={}&code={:x}", exinfo.nLifetime, exinfo.ExceptionRecord.ExceptionCode);
 
-            submitThread = std::thread([url = std::move(url)] {
+            submitThread = std::thread([url = std::move(url)]{
                 const auto hInternet = WinHttpOpen(L"DALAMUDCRASHHANDLER", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, WINHTTP_FLAG_SECURE_DEFAULTS);
                 const auto hConnect = !hInternet ? nullptr : WinHttpConnect(hInternet, L"kamori.goats.dev", INTERNET_DEFAULT_HTTPS_PORT, 0);
                 const auto hRequest = !hConnect ? nullptr : WinHttpOpenRequest(hConnect, L"GET", url.c_str(), nullptr, nullptr, nullptr, 0);
-                const auto bSent = !hRequest ? false : WinHttpSendRequest(hRequest,
-                    WINHTTP_NO_ADDITIONAL_HEADERS,
-                    0, WINHTTP_NO_REQUEST_DATA, 0,
-                    0, 0);
+                const auto bSent = !hRequest
+                                       ? false
+                                       : WinHttpSendRequest(hRequest,
+                                                            WINHTTP_NO_ADDITIONAL_HEADERS,
+                                                            0, WINHTTP_NO_REQUEST_DATA, 0,
+                                                            0, 0);
 
                 if (!bSent)
                     std::cerr << std::format("Failed to send metric: 0x{:x}", GetLastError()) << std::endl;
@@ -528,7 +648,7 @@ int main() {
                 if (hRequest) WinHttpCloseHandle(hRequest);
                 if (hConnect) WinHttpCloseHandle(hConnect);
                 if (hInternet) WinHttpCloseHandle(hInternet);
-            });
+                });
         }
 
         TASKDIALOGCONFIG config = { 0 };
@@ -554,7 +674,7 @@ int main() {
             R"aa(This may be caused by a faulty plugin, a broken TexTools modification, any other third-party tool, or simply a bug in the game.)aa" "\n"
             "\n"
             R"aa(Try running integrity check in the XIVLauncher settings, and disabling plugins you don't need.)aa"
-        );
+            );
         config.pButtons = buttons;
         config.cButtons = ARRAYSIZE(buttons);
         config.nDefaultButton = IdButtonRestart;
@@ -566,7 +686,7 @@ int main() {
         config.cxWidth = 300;
         config.pszFooter = (L""
             R"aa(<a href="help">Help</a> | <a href="logdir">Open log directory</a> | <a href="logfile">Open log file</a> | <a href="resume">Attempt to resume</a>)aa"
-        );
+            );
 
         // Can't do this, xiv stops pumping messages here
         //config.hwndParent = FindWindowA("FFXIVGAME", NULL);

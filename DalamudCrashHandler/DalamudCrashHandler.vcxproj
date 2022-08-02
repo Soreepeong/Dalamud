@@ -50,7 +50,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>Winhttp.lib;Dbghelp.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Dbghelp.lib;DbgEng.lib;Winhttp.lib;CorGuids.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
@@ -77,16 +77,24 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="DalamudCrashHandler.cpp" />
+    <ClCompile Include="xclrdata\xclrdata_i.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Dalamud.Boot\crashhandler_shared.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="xclrdata\xclrdata_h.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="DalamudCrashHandler.rc" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="dalamud.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Midl Include="xclrdata\xclrdata.idl">
+      <OutputDirectory Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)xclrdata</OutputDirectory>
+      <OutputDirectory Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)xclrdata</OutputDirectory>
+    </Midl>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

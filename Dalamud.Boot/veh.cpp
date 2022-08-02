@@ -124,10 +124,11 @@ static void append_injector_launch_args(std::vector<std::wstring>& args)
     }
 }
 
+static bool s_handling = false;
+static std::recursive_mutex s_exception_handler_mutex;
+
 LONG exception_handler(EXCEPTION_POINTERS* ex)
 {
-    static std::recursive_mutex s_exception_handler_mutex;
-
     if (ex->ExceptionRecord->ExceptionCode == 0x12345678)
     {
         // pass
@@ -143,8 +144,12 @@ LONG exception_handler(EXCEPTION_POINTERS* ex)
     }
 
     // block any other exceptions hitting the veh while the messagebox is open
-    const auto lock = std::lock_guard(s_exception_handler_mutex);
+    std::unique_lock lock(s_exception_handler_mutex);
 
+    if (s_handling)
+        return EXCEPTION_CONTINUE_SEARCH;
+
+    s_handling = true;
     exception_info exinfo{};
     exinfo.pExceptionPointers = ex;
     exinfo.ExceptionPointers = *ex;
@@ -172,13 +177,16 @@ LONG exception_handler(EXCEPTION_POINTERS* ex)
         stackTrace = static_cast<wchar_t*(*)()>(fn)();
         // Don't free it, as the program's going to be quit anyway
     }
-    
+
     exinfo.dwStackTraceLength = static_cast<DWORD>(stackTrace.size());
     if (DWORD written; !WriteFile(g_crashhandler_pipe_write, &exinfo, static_cast<DWORD>(sizeof exinfo), &written, nullptr) || sizeof exinfo != written)
         return EXCEPTION_CONTINUE_SEARCH;
 
     if (DWORD written; !WriteFile(g_crashhandler_pipe_write, &stackTrace[0], static_cast<DWORD>(std::span(stackTrace).size_bytes()), &written, nullptr) || std::span(stackTrace).size_bytes() != written)
         return EXCEPTION_CONTINUE_SEARCH;
+
+    s_handling = false;
+    lock.unlock();
 
     SuspendThread(GetCurrentThread());
     return EXCEPTION_CONTINUE_SEARCH;

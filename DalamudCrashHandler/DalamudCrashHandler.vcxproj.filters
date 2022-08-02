@@ -13,10 +13,16 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="xclrdata">
+      <UniqueIdentifier>{0fdcf92b-773f-4731-a880-03409f3c8919}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DalamudCrashHandler.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="xclrdata\xclrdata_i.c">
+      <Filter>xclrdata</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -25,6 +31,9 @@
     </ClInclude>
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="xclrdata\xclrdata_h.h">
+      <Filter>xclrdata</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -36,5 +45,10 @@
     <Image Include="dalamud.ico">
       <Filter>Resource Files</Filter>
     </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <Midl Include="xclrdata\xclrdata.idl">
+      <Filter>xclrdata</Filter>
+    </Midl>
   </ItemGroup>
 </Project>
