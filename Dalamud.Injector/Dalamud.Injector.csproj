@@ -74,6 +74,7 @@
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
+        <PackageReference Include="System.CommandLine.DragonFruit" Version="0.4.0-alpha.22272.1" />
     </ItemGroup>
 
     <ItemGroup>
