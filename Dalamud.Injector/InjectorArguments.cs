@@ -133,6 +133,47 @@ public class InjectorArguments
     public bool BootShowMsgbox3 = false;
 
     [ArgumentParser.NamedArgumentAttribute(
+        "--disable-prevent-devicechange-crashes",
+        implicitValue: true,
+        global: true,
+        summary: "disable gamefix \"prevent_devicechange_crashes\"")]
+    public bool BootDisablePreventDeviceChangeCrashes = false;
+
+    [ArgumentParser.NamedArgumentAttribute(
+        "--disable-disable-game-openprocess-access-check",
+        implicitValue: true,
+        global: true,
+        summary: "disable gamefix \"disable_game_openprocess_access_check\"")]
+    public bool BootDisableGameOpenProcessAccessCheck = false;
+
+    [ArgumentParser.NamedArgumentAttribute(
+        "--disable-redirect-openprocess",
+        implicitValue: true,
+        global: true,
+        summary: "disable gamefix \"redirect_openprocess\"")]
+    public bool BootRedirectOpenProcess = false;
+
+    [ArgumentParser.NamedArgumentAttribute(
+        "--disable-backup-userdata-save",
+        implicitValue: true,
+        global: true,
+        summary: "disable gamefix \"backup_userdata_save\"")]
+    public bool BootBackupUserdataSave = false;
+
+    [ArgumentParser.NamedArgumentAttribute(
+        "--disable-clr-failfast-hijack",
+        implicitValue: true,
+        global: true,
+        summary: "disable gamefix \"clr_failfast_hijack\"")]
+    public bool BootClrFailfastHijack = false;
+
+    [ArgumentParser.NamedArgumentAttribute(
+        "--unhook-dlls",
+        global: true,
+        summary: "specify dlls to reset upon loading Dalamud")]
+    public List<string> BootUnhookDlls = new();
+
+    [ArgumentParser.NamedArgumentAttribute(
         "--no-plugin",
         implicitValue: true,
         global: true,

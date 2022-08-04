@@ -330,18 +330,21 @@ public sealed class App
         var xivlauncherDir = Path.Combine(appDataDir, "XIVLauncher");
 
         startInfo ??= new DalamudStartInfo();
-        startInfo.WorkingDirectory = this.args.DalamudWorkingDirectory ??
-                                     startInfo.WorkingDirectory ?? Directory.GetCurrentDirectory();
-        startInfo.ConfigurationPath = this.args.DalamudConfigurationPath ??
-                                      startInfo.ConfigurationPath ??
-                                      Path.Combine(xivlauncherDir, "dalamudConfig.json");
-        startInfo.PluginDirectory = this.args.DalamudPluginDirectory ??
-                                    startInfo.PluginDirectory ?? Path.Combine(xivlauncherDir, "installedPlugins");
-        startInfo.DefaultPluginDirectory = this.args.DalamudDevPluginDirectory ??
-                                           startInfo.DefaultPluginDirectory ??
-                                           Path.Combine(xivlauncherDir, "devPlugins");
-        startInfo.AssetDirectory = this.args.DalamudAssetDirectory ??
-                                   startInfo.AssetDirectory ?? Path.Combine(xivlauncherDir, "dalamudAssets", "dev");
+        startInfo.WorkingDirectory = this.args.DalamudWorkingDirectory
+                                     ?? startInfo.WorkingDirectory
+                                     ?? Directory.GetCurrentDirectory();
+        startInfo.ConfigurationPath = this.args.DalamudConfigurationPath
+                                      ?? startInfo.ConfigurationPath
+                                      ?? Path.Combine(xivlauncherDir, "dalamudConfig.json");
+        startInfo.PluginDirectory = this.args.DalamudPluginDirectory
+                                    ?? startInfo.PluginDirectory
+                                    ?? Path.Combine(xivlauncherDir, "installedPlugins");
+        startInfo.DefaultPluginDirectory = this.args.DalamudDevPluginDirectory
+                                           ?? startInfo.DefaultPluginDirectory
+                                           ?? Path.Combine(xivlauncherDir, "devPlugins");
+        startInfo.AssetDirectory = this.args.DalamudAssetDirectory
+                                   ?? startInfo.AssetDirectory
+                                   ?? Path.Combine(xivlauncherDir, "dalamudAssets", "dev");
         startInfo.DelayInitializeMs =
             this.args.DalamudDelayInitialize.GetValueOrDefault(startInfo.DelayInitializeMs);
         startInfo.Language = this.args.DalamudClientLanguage.GetValueOrDefault(startInfo.Language);
@@ -352,14 +355,17 @@ public sealed class App
         startInfo.BootShowConsole = this.args.BootShowConsole;
         startInfo.BootEnableEtw = this.args.BootEnableEtw;
         startInfo.BootLogPath = GetLogPath("dalamud.boot");
-        startInfo.BootEnabledGameFixes = new List<string>
-        {
-            "prevent_devicechange_crashes",
-            "disable_game_openprocess_access_check",
-            "redirect_openprocess",
-            "backup_userdata_save",
-            "clr_failfast_hijack",
-        };
+        startInfo.BootEnabledGameFixes = new List<string>();
+        if (!this.args.BootDisablePreventDeviceChangeCrashes)
+            startInfo.BootEnabledGameFixes.Add("prevent_devicechange_crashes");
+        if (!this.args.BootDisableGameOpenProcessAccessCheck)
+            startInfo.BootEnabledGameFixes.Add("disable_game_openprocess_access_check");
+        if (!this.args.BootRedirectOpenProcess)
+            startInfo.BootEnabledGameFixes.Add("redirect_openprocess");
+        if (!this.args.BootBackupUserdataSave)
+            startInfo.BootEnabledGameFixes.Add("backup_userdata_save");
+        if (!this.args.BootClrFailfastHijack)
+            startInfo.BootEnabledGameFixes.Add("clr_failfast_hijack");
         startInfo.BootDotnetOpenProcessHookMode = 0;
         startInfo.BootWaitMessageBox |= this.args.BootShowMsgbox1 ? 1 : 0;
         startInfo.BootWaitMessageBox |= this.args.BootShowMsgbox2 ? 2 : 0;
@@ -368,7 +374,7 @@ public sealed class App
         startInfo.BootVehFull = this.args.BootEnableVehFull;
         startInfo.NoLoadPlugins = this.args.NoPlugin;
         startInfo.NoLoadThirdPartyPlugins = this.args.NoThirdPartyPlugin;
-        // startInfo.BootUnhookDlls = new List<string>() { "kernel32.dll", "ntdll.dll", "user32.dll" };
+        startInfo.BootUnhookDlls = this.args.BootUnhookDlls; // "kernel32.dll", "ntdll.dll", "user32.dll"
 
         return startInfo;
     }
