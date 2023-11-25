@@ -11,7 +11,8 @@ using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Services;
 using Lumina.Data.Files;
 using Lumina.Data.Parsing.Tex.Buffers;
-using SharpDX.DXGI;
+
+using TerraFX.Interop.DirectX;
 
 namespace Dalamud.Interface.Internal;
 
@@ -219,9 +220,9 @@ internal class TextureManager : IDisposable, IServiceType, ITextureProvider, ITe
                         (int)TexFile.TextureFormat.BppShift);
 
         var (dxgiFormat, conversion) = TexFile.GetDxgiFormatFromTextureFormat(file.Header.Format, false);
-        if (conversion != TexFile.DxgiFormatConversion.NoConversion || !this.im.SupportsDxgiFormat((Format)dxgiFormat))
+        if (conversion != TexFile.DxgiFormatConversion.NoConversion || !this.im.SupportsTextureFormat(dxgiFormat))
         {
-            dxgiFormat = (int)Format.B8G8R8A8_UNorm;
+            dxgiFormat = (int)DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM;
             buffer = buffer.Filter(0, 0, TexFile.TextureFormat.B8G8R8A8);
             bpp = 32;
         }
@@ -230,7 +231,7 @@ internal class TextureManager : IDisposable, IServiceType, ITextureProvider, ITe
                         ? Math.Max(1, (buffer.Width + 3) / 4) * 2 * bpp
                         : ((buffer.Width * bpp) + 7) / 8;
 
-        return this.im.LoadImageFromDxgiFormat(buffer.RawData, pitch, buffer.Width, buffer.Height, (Format)dxgiFormat);
+        return this.im.LoadImageFormat(buffer.RawData, pitch, buffer.Width, buffer.Height, dxgiFormat);
     }
 
     /// <inheritdoc/>

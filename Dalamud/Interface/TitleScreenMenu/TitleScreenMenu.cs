@@ -6,7 +6,6 @@ using Dalamud.Interface.Internal;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Services;
-using ImGuiScene;
 
 namespace Dalamud.Interface;
 

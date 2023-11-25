@@ -13,7 +13,7 @@ using Dalamud.Plugin.Internal;
 using Dalamud.Plugin.Internal.Types;
 using Dalamud.Plugin.Internal.Types.Manifest;
 using Dalamud.Utility;
-using ImGuiScene;
+
 using Serilog;
 
 namespace Dalamud.Interface.Internal.Windows;

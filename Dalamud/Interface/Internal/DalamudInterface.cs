@@ -25,14 +25,12 @@ using Dalamud.Interface.Style;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
-using Dalamud.Logging;
 using Dalamud.Logging.Internal;
 using Dalamud.Plugin.Internal;
 using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using ImGuiNET;
-using ImGuiScene;
 using ImPlotNET;
 using PInvoke;
 using Serilog.Events;
@@ -743,6 +741,15 @@ internal class DalamudInterface : IDisposable, IServiceType
                         this.OpenBranchSwitcher();
                     }
 
+                    if (ImGui.MenuItem(
+                            "Use DX12 on DX11 (experimental, restart required)",
+                            null,
+                            configuration.UseDx12Preview))
+                    {
+                        configuration.UseDx12Preview = !configuration.UseDx12Preview;
+                        configuration.QueueSave();
+                    }
+
                     ImGui.MenuItem(Util.AssemblyVersion, false);
                     ImGui.MenuItem(dalamud.StartInfo.GameVersion?.ToString() ?? "Unknown version", false);
                     ImGui.MenuItem($"D: {Util.GetGitHash()}[{Util.GetGitCommitCount()}] CS: {Util.GetGitHashClientStructs()}[{FFXIVClientStructs.Interop.Resolver.Version}]", false);
@@ -818,6 +825,7 @@ internal class DalamudInterface : IDisposable, IServiceType
                     if (ImGui.MenuItem("Show dev bar info", null, configuration.ShowDevBarInfo))
                     {
                         configuration.ShowDevBarInfo = !configuration.ShowDevBarInfo;
+                        configuration.QueueSave();
                     }
 
                     ImGui.EndMenu();

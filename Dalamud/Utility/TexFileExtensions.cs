@@ -1,4 +1,5 @@
-using ImGuiScene;
+using Dalamud.ImGuiScene;
+
 using Lumina.Data.Files;
 
 namespace Dalamud.Utility;
@@ -9,7 +10,7 @@ namespace Dalamud.Utility;
 public static class TexFileExtensions
 {
     /// <summary>
-    /// Returns the image data formatted for <see cref="RawDX11Scene.LoadImageRaw"/>.
+    /// Returns the image data formatted for <see cref="IImGuiScene.LoadImageRaw(System.ReadOnlySpan{byte},int,int,int)"/>.
     /// </summary>
     /// <param name="texFile">The TexFile to format.</param>
     /// <returns>The formatted image data.</returns>

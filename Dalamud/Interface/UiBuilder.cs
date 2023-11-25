@@ -14,9 +14,8 @@ using Dalamud.Interface.Internal.ManagedAsserts;
 using Dalamud.Interface.Internal.Notifications;
 using Dalamud.Utility;
 using ImGuiNET;
-using ImGuiScene;
+
 using Serilog;
-using SharpDX.Direct3D11;
 
 namespace Dalamud.Interface;
 
@@ -124,7 +123,13 @@ public sealed class UiBuilder : IDisposable
     /// <summary>
     /// Gets the game's active Direct3D device.
     /// </summary>
-    public Device Device => this.InterfaceManagerWithScene.Device!;
+    [Obsolete($"Use your own library of choice, wrapping ${nameof(DevicePtr)}.", true)]
+    public SharpDX.Direct3D11.Device Device => new(this.InterfaceManagerWithScene.Device);
+    
+    /// <summary>
+    /// Gets the game's active Direct3D device.
+    /// </summary>
+    public nint DevicePtr => this.InterfaceManagerWithScene.Device;
 
     /// <summary>
     /// Gets the game's main window handle.
@@ -234,7 +239,7 @@ public sealed class UiBuilder : IDisposable
     /// Loads an image from the specified file.
     /// </summary>
     /// <param name="filePath">The full filepath to the image.</param>
-    /// <returns>A <see cref="TextureWrap"/> object wrapping the created image.  Use <see cref="TextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
+    /// <returns>A <see cref="IDalamudTextureWrap"/> object wrapping the created image.  Use <see cref="IDalamudTextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
     public IDalamudTextureWrap LoadImage(string filePath)
         => this.InterfaceManagerWithScene?.LoadImage(filePath)
            ?? throw new InvalidOperationException("Load failed.");
@@ -243,7 +248,7 @@ public sealed class UiBuilder : IDisposable
     /// Loads an image from a byte stream, such as a png downloaded into memory.
     /// </summary>
     /// <param name="imageData">A byte array containing the raw image data.</param>
-    /// <returns>A <see cref="TextureWrap"/> object wrapping the created image.  Use <see cref="TextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
+    /// <returns>A <see cref="IDalamudTextureWrap"/> object wrapping the created image.  Use <see cref="IDalamudTextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
     public IDalamudTextureWrap LoadImage(byte[] imageData)
         => this.InterfaceManagerWithScene?.LoadImage(imageData)
            ?? throw new InvalidOperationException("Load failed.");
@@ -255,7 +260,7 @@ public sealed class UiBuilder : IDisposable
     /// <param name="width">The width of the image contained in <paramref name="imageData"/>.</param>
     /// <param name="height">The height of the image contained in <paramref name="imageData"/>.</param>
     /// <param name="numChannels">The number of channels (bytes per pixel) of the image contained in <paramref name="imageData"/>.  This should usually be 4.</param>
-    /// <returns>A <see cref="TextureWrap"/> object wrapping the created image.  Use <see cref="TextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
+    /// <returns>A <see cref="IDalamudTextureWrap"/> object wrapping the created image.  Use <see cref="IDalamudTextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
     public IDalamudTextureWrap LoadImageRaw(byte[] imageData, int width, int height, int numChannels)
         => this.InterfaceManagerWithScene?.LoadImageRaw(imageData, width, height, numChannels)
            ?? throw new InvalidOperationException("Load failed.");
@@ -272,7 +277,7 @@ public sealed class UiBuilder : IDisposable
     /// Asynchronously loads an image from the specified file, when it's possible to do so.
     /// </summary>
     /// <param name="filePath">The full filepath to the image.</param>
-    /// <returns>A <see cref="TextureWrap"/> object wrapping the created image.  Use <see cref="TextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
+    /// <returns>A <see cref="IDalamudTextureWrap"/> object wrapping the created image.  Use <see cref="IDalamudTextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
     public Task<IDalamudTextureWrap> LoadImageAsync(string filePath) => Task.Run(
         async () =>
             (await this.InterfaceManagerWithSceneAsync).LoadImage(filePath)
@@ -282,7 +287,7 @@ public sealed class UiBuilder : IDisposable
     /// Asynchronously loads an image from a byte stream, such as a png downloaded into memory, when it's possible to do so.
     /// </summary>
     /// <param name="imageData">A byte array containing the raw image data.</param>
-    /// <returns>A <see cref="TextureWrap"/> object wrapping the created image.  Use <see cref="TextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
+    /// <returns>A <see cref="IDalamudTextureWrap"/> object wrapping the created image.  Use <see cref="IDalamudTextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
     public Task<IDalamudTextureWrap> LoadImageAsync(byte[] imageData) => Task.Run(
         async () =>
             (await this.InterfaceManagerWithSceneAsync).LoadImage(imageData)
@@ -295,7 +300,7 @@ public sealed class UiBuilder : IDisposable
     /// <param name="width">The width of the image contained in <paramref name="imageData"/>.</param>
     /// <param name="height">The height of the image contained in <paramref name="imageData"/>.</param>
     /// <param name="numChannels">The number of channels (bytes per pixel) of the image contained in <paramref name="imageData"/>.  This should usually be 4.</param>
-    /// <returns>A <see cref="TextureWrap"/> object wrapping the created image.  Use <see cref="TextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
+    /// <returns>A <see cref="IDalamudTextureWrap"/> object wrapping the created image.  Use <see cref="IDalamudTextureWrap.ImGuiHandle"/> inside ImGui.Image().</returns>
     public Task<IDalamudTextureWrap> LoadImageRawAsync(byte[] imageData, int width, int height, int numChannels) => Task.Run(
         async () =>
             (await this.InterfaceManagerWithSceneAsync).LoadImageRaw(imageData, width, height, numChannels)
