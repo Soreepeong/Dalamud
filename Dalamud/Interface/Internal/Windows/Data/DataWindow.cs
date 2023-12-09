@@ -25,6 +25,7 @@ internal class DataWindow : Window
         new AetherytesWidget(),
         new AtkArrayDataBrowserWidget(),
         new BuddyListWidget(),
+        new ClipboardChangelogWidget(),
         new CommandWidget(),
         new ConditionWidget(),
         new ConfigurationWidget(),

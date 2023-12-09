@@ -1126,8 +1126,20 @@ internal class InterfaceManager : IDisposable, IServiceType
 
     private unsafe IntPtr ProcessMessageDetour(IntPtr hWnd, uint msg, ulong wParam, ulong lParam, IntPtr handeled)
     {
+        if (msg == 0x0308)
+        {
+            // WM_DRAWCLIPBOARD
+            // Run on next tick. We need the game's WndProc to have run for the clipboard contents to be updated.
+            this.framework.RunOnTick(
+                () =>
+                    Service<ClipboardProvider>.Get()
+                                              .InvokeClipboardChangedCallback(
+                                                  IClipboardProvider.ClipboardChangeSource.External));
+        }
+
         var ime = Service<DalamudIME>.GetNullable();
         var res = ime?.ProcessWndProcW(hWnd, (User32.WindowMessage)msg, (void*)wParam, (void*)lParam);
+
         return this.processMessageHook.Original(hWnd, msg, wParam, lParam, handeled);
     }
 
