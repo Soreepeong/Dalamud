@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -106,7 +105,7 @@ internal sealed unsafe class ClipboardProvider : IClipboardProvider, IServiceTyp
         io.GetClipboardTextFn = (nint)(delegate* unmanaged<nint, byte*>)&StaticGetClipboardTextImpl;
 
         this.applyToSystemClipboardHook = Hook<ApplyToSystemClipboardDelegate>.FromFunctionPointerVariable(
-            (nint)(&InputManager->ClipMan.vtbl->WriteToSystemClipboard),
+            (nint)(&InputManager->ClipboardData.VTable->WriteToSystemClipboard),
             this.ApplyToSystemClipboardDetour);
         this.applyToSystemClipboardHook.Enable();
         return;
@@ -185,7 +184,7 @@ internal sealed unsafe class ClipboardProvider : IClipboardProvider, IServiceTyp
         
         var inpman = InputManager;
         inpman->CopyBufferRaw.SetString(text);
-        inpman->ClipMan.WriteToSystemClipboard(&inpman->CopyBufferRaw, &inpman->CopyBufferFiltered);
+        inpman->ClipboardData.WriteToSystemClipboard(&inpman->CopyBufferRaw, &inpman->CopyBufferFiltered);
         
         this.applyToSystemClipboardHook.Enable();
         this.InvokeClipboardChangedCallback(IClipboardProvider.ClipboardChangeSource.Dalamud);
@@ -230,7 +229,7 @@ internal sealed unsafe class ClipboardProvider : IClipboardProvider, IServiceTyp
         ThreadSafety.AssertMainThread();
 
         var inpman = InputManager;
-        ref var sysClip = ref inpman->ClipMan.GetSystemClipboardText();
+        ref var sysClip = ref *inpman->ClipboardData.GetSystemClipboardText();
         if (enablePayloads && inpman->CopyBufferFiltered.AsSpan().SequenceEqual(sysClip.AsSpan()))
             return ref inpman->CopyBufferRaw;
 
