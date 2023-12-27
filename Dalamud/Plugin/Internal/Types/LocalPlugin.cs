@@ -4,11 +4,9 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
-using Dalamud.Common.Game;
 using Dalamud.Configuration.Internal;
 using Dalamud.Game;
 using Dalamud.Game.Gui.Dtr;
-using Dalamud.Interface.GameFonts;
 using Dalamud.Interface.Internal;
 using Dalamud.IoC.Internal;
 using Dalamud.Logging.Internal;
@@ -223,35 +221,9 @@ internal class LocalPlugin : IDisposable
     public IServiceScope? ServiceScope { get; private set; }
 
     /// <inheritdoc/>
-    public void Dispose()
+    public virtual void Dispose()
     {
-        var framework = Service<Framework>.GetNullable();
-        var configuration = Service<DalamudConfiguration>.Get();
-
-        var didPluginDispose = false;
-        if (this.instance != null)
-        {
-            didPluginDispose = true;
-            if (this.manifest.CanUnloadAsync || framework == null)
-                this.instance.Dispose();
-            else
-                framework.RunOnFrameworkThread(() => this.instance.Dispose()).Wait();
-
-            this.instance = null;
-        }
-
-        this.DalamudInterface?.ExplicitDispose();
-        this.DalamudInterface = null;
-
-        this.ServiceScope?.Dispose();
-        this.ServiceScope = null;
-
-        this.pluginType = null;
-        this.pluginAssembly = null;
-
-        if (this.loader != null && didPluginDispose)
-            Thread.Sleep(configuration.PluginWaitBeforeFree ?? PluginManager.PluginWaitBeforeFreeDefault);
-        this.loader?.Dispose();
+        // Empty.
     }
 
     /// <summary>
@@ -415,7 +387,7 @@ internal class LocalPlugin : IDisposable
             if (this.manifest.LoadSync && this.manifest.LoadRequiredState is 0 or 1)
             {
                 this.instance = await framework.RunOnFrameworkThread(
-                                    () => this.ServiceScope.CreateAsync(this.pluginType!, this.DalamudInterface!)) as IDalamudPlugin;
+                                    () => this.ServiceScope!.CreateAsync(this.pluginType!, this.DalamudInterface!)) as IDalamudPlugin;
             }
             else
             {
@@ -459,9 +431,6 @@ internal class LocalPlugin : IDisposable
     /// <returns>The task.</returns>
     public async Task UnloadAsync(bool reloading = false, bool waitBeforeLoaderDispose = true)
     {
-        var configuration = Service<DalamudConfiguration>.Get();
-        var framework = Service<Framework>.GetNullable();
-
         await this.pluginLoadStateLock.WaitAsync();
         try
         {
@@ -486,35 +455,7 @@ internal class LocalPlugin : IDisposable
                     throw new ArgumentOutOfRangeException(this.State.ToString());
             }
 
-            this.State = PluginState.Unloading;
-            Log.Information($"Unloading {this.DllFile.Name}");
-
-            if (this.manifest.CanUnloadAsync || framework == null)
-                this.instance?.Dispose();
-            else
-                await framework.RunOnFrameworkThread(() => this.instance?.Dispose());
-
-            this.instance = null;
-
-            this.DalamudInterface?.ExplicitDispose();
-            this.DalamudInterface = null;
-
-            this.ServiceScope?.Dispose();
-            this.ServiceScope = null;
-
-            this.pluginType = null;
-            this.pluginAssembly = null;
-
-            if (!reloading)
-            {
-                if (waitBeforeLoaderDispose && this.loader != null)
-                    await Task.Delay(configuration.PluginWaitBeforeFree ?? PluginManager.PluginWaitBeforeFreeDefault);
-                this.loader?.Dispose();
-                this.loader = null;
-            }
-
-            this.State = PluginState.Unloaded;
-            Log.Information($"Finished unloading {this.DllFile.Name}");
+            await this.UnloadAsyncUnsafe(reloading, waitBeforeLoaderDispose);
         }
         catch (Exception ex)
         {
@@ -678,5 +619,49 @@ internal class LocalPlugin : IDisposable
             Log.Error($"Nothing inherits from IDalamudPlugin: {this.DllFile.FullName}");
             throw new InvalidPluginException(this.DllFile);
         }
+    }
+
+    private async Task UnloadAsyncUnsafe(bool reloading, bool waitBeforeLoaderDispose)
+    {
+        ThreadSafety.AssertNotMainThread();
+
+        // PluginManager guarantees that Framework is available.
+        // See ResolvePossiblePluginDependencyServices.
+        var framework = await Service<Framework>.GetAsync();
+
+        this.State = PluginState.Unloading;
+        Log.Information($"Unloading {this.DllFile.Name}");
+
+        // A plugin may implement IAsyncDisposable.
+        // ReSharper disable once SuspiciousTypeConversion.Global
+        if (this.instance is IAsyncDisposable asyncDisposable)
+            await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+        else if (this.manifest.CanUnloadAsync || framework is null)
+            this.instance?.Dispose();
+        else
+            await framework.RunOnFrameworkThread(() => this.instance?.Dispose()).ConfigureAwait(false); 
+
+        this.instance = null;
+
+        this.DalamudInterface?.ExplicitDispose();
+        this.DalamudInterface = null;
+
+        this.ServiceScope?.Dispose();
+        this.ServiceScope = null;
+
+        this.pluginType = null;
+        this.pluginAssembly = null;
+
+        if (!reloading)
+        {
+            var configuration = Service<DalamudConfiguration>.Get();
+            if (waitBeforeLoaderDispose && this.loader != null)
+                await Task.Delay(configuration.PluginWaitBeforeFree ?? PluginManager.PluginWaitBeforeFreeDefault);
+            this.loader?.Dispose();
+            this.loader = null;
+        }
+
+        this.State = PluginState.Unloaded;
+        Log.Information($"Finished unloading {this.DllFile.Name}");
     }
 }

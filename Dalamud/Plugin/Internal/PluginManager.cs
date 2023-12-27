@@ -55,7 +55,7 @@ namespace Dalamud.Plugin.Internal;
 [InherentDependency<DataShare>]
 
 #pragma warning restore SA1015
-internal partial class PluginManager : IDisposable, IServiceType
+internal partial class PluginManager : IAsyncDisposable, IServiceType
 {
     /// <summary>
     /// Default time to wait between plugin unload and plugin assembly unload.
@@ -370,47 +370,24 @@ internal partial class PluginManager : IDisposable, IServiceType
     }
 
     /// <inheritdoc/>
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        var disposablePlugins =
-            this.installedPluginsList.Where(plugin => plugin.State is PluginState.Loaded or PluginState.LoadError).ToArray();
-        if (disposablePlugins.Any())
+        var unloadTasks = new Dictionary<LocalPlugin, Task>();
+        foreach (var p in this.installedPluginsList)
         {
-            // Unload them first, just in case some of plugin codes are still running via callbacks initiated externally.
-            foreach (var plugin in disposablePlugins.Where(plugin => !plugin.Manifest.CanUnloadAsync))
-            {
-                try
-                {
-                    plugin.UnloadAsync(true, false).Wait();
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, $"Error unloading {plugin.Name}");
-                }
-            }
+            if (p.State is not PluginState.Loaded and not PluginState.LoadError)
+                continue;
+            unloadTasks[p] = Task.Run(() => p.UnloadAsync());
+        }
 
-            Task.WaitAll(disposablePlugins
-                             .Where(plugin => plugin.Manifest.CanUnloadAsync)
-                             .Select(plugin => Task.Run(async () =>
-                             {
-                                 try
-                                 {
-                                     await plugin.UnloadAsync(true, false);
-                                 }
-                                 catch (Exception ex)
-                                 {
-                                     Log.Error(ex, $"Error unloading {plugin.Name}");
-                                 }
-                             })).ToArray());
+        // Note: if extra wait is desired, see LocalPlugin.UnloadAsyncUnsafe.
+        await Task.WhenAll(unloadTasks.Values).ConfigureAwait(false);
 
-            // Just in case plugins still have tasks running that they didn't cancel when they should have,
-            // give them some time to complete it.
-            Thread.Sleep(this.configuration.PluginWaitBeforeFree ?? PluginWaitBeforeFreeDefault);
-
-            // Now that we've waited enough, dispose the whole plugin.
-            // Since plugins should have been unloaded above, this should be done quickly.
-            foreach (var plugin in disposablePlugins)
-                plugin.ExplicitDisposeIgnoreExceptions($"Error disposing {plugin.Name}", Log);
+        foreach (var (plugin, task) in unloadTasks)
+        {
+            if (!task.IsCompletedSuccessfully)
+                continue;
+            Log.Error(task.Exception, $"Error disposing {plugin.Name}");
         }
 
         this.assemblyLocationMonoHook?.Dispose();
@@ -1222,6 +1199,9 @@ internal partial class PluginManager : IDisposable, IServiceType
     /// <returns>The dependency services.</returns>
     private static IEnumerable<Type> ResolvePossiblePluginDependencyServices()
     {
+        // LocalPlugin unloader needs Framework.
+        yield return typeof(Framework);
+
         foreach (var serviceType in ServiceManager.GetConcreteServiceTypes())
         {
             if (serviceType == typeof(PluginManager))
@@ -1233,14 +1213,14 @@ internal partial class PluginManager : IDisposable, IServiceType
             {
                 var typeAsServiceT = ServiceHelpers.GetAsService(serviceType);
                 var dependencies = ServiceHelpers.GetDependencies(typeAsServiceT, false);
-                ServiceManager.Log.Verbose("Found dependencies of scoped plugin service {Type} ({Cnt})", serviceType.FullName!, dependencies!.Count);
+                Log.Verbose("Found dependencies of scoped plugin service {Type} ({Cnt})", serviceType.FullName!, dependencies!.Count);
                     
                 foreach (var scopedDep in dependencies)
                 {
                     if (scopedDep == typeof(PluginManager))
                         throw new Exception("Scoped plugin services cannot depend on PluginManager.");
                         
-                    ServiceManager.Log.Verbose("PluginManager MUST depend on {Type} via {BaseType}", scopedDep.FullName!, serviceType.FullName!);
+                    Log.Verbose("PluginManager MUST depend on {Type} via {BaseType}", scopedDep.FullName!, serviceType.FullName!);
                     yield return scopedDep;
                 }
 
@@ -1251,7 +1231,7 @@ internal partial class PluginManager : IDisposable, IServiceType
             if (pluginInterfaceAttribute == null)
                 continue;
 
-            ServiceManager.Log.Verbose("PluginManager MUST depend on {Type}", serviceType.FullName!);
+            Log.Verbose("PluginManager MUST depend on {Type}", serviceType.FullName!);
             yield return serviceType;
         }
     }

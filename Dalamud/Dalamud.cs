@@ -3,13 +3,11 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Threading.Tasks;
 
 using Dalamud.Common;
 using Dalamud.Configuration.Internal;
 using Dalamud.Game;
-using Dalamud.Interface.Internal;
 using Dalamud.Plugin.Internal;
 using Dalamud.Storage;
 using Dalamud.Utility;
@@ -32,11 +30,7 @@ namespace Dalamud;
 [ServiceManager.ProvidedService]
 internal sealed class Dalamud : IServiceType
 {
-    #region Internals
-
-    private readonly ManualResetEvent unloadSignal;
-
-    #endregion
+    private readonly TaskCompletionSource unloadTaskCompletionSource = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Dalamud"/> class.
@@ -48,9 +42,6 @@ internal sealed class Dalamud : IServiceType
     public Dalamud(DalamudStartInfo info, ReliableFileStorage fs, DalamudConfiguration configuration, IntPtr mainThreadContinueEvent)
     {
         this.StartInfo = info;
-        
-        this.unloadSignal = new ManualResetEvent(false);
-        this.unloadSignal.Reset();
         
         // Directory resolved signatures(CS, our own) will be cached in
         var cacheDir = new DirectoryInfo(Path.Combine(this.StartInfo.WorkingDirectory!, "cachedSigs"));
@@ -158,37 +149,14 @@ internal sealed class Dalamud : IServiceType
             Kernel32.CreateMutex(attribs, false, "DALAMUD_CRASHES_NO_MORE");
         }
 
-        this.unloadSignal.Set();
+        this.unloadTaskCompletionSource.SetResult();
     }
 
     /// <summary>
     /// Wait for an unload request to start.
     /// </summary>
-    public void WaitForUnload()
-    {
-        this.unloadSignal.WaitOne();
-    }
-
-    /// <summary>
-    /// Dispose subsystems related to plugin handling.
-    /// </summary>
-    public void DisposePlugins()
-    {
-        // this must be done before unloading interface manager, in order to do rebuild
-        // the correct cascaded WndProc (IME -> RawDX11Scene -> Game). Otherwise the game
-        // will not receive any windows messages
-        Service<DalamudIme>.GetNullable()?.Dispose();
-
-        // this must be done before unloading plugins, or it can cause a race condition
-        // due to rendering happening on another thread, where a plugin might receive
-        // a render call after it has been disposed, which can crash if it attempts to
-        // use any resources that it freed in its own Dispose method
-        Service<InterfaceManager>.GetNullable()?.Dispose();
-
-        Service<DalamudInterface>.GetNullable()?.Dispose();
-
-        Service<PluginManager>.GetNullable()?.Dispose();
-    }
+    /// <returns>A <see cref="Task"/> representing that Dalamud is up and running.</returns>
+    public Task WaitForUnloadAsync() => this.unloadTaskCompletionSource.Task;
 
     /// <summary>
     /// Replace the built-in exception handler with a debug one.

@@ -13,6 +13,9 @@ using Dalamud.Plugin.Internal;
 using Dalamud.Storage;
 using Dalamud.Support;
 using Dalamud.Utility;
+
+using JetBrains.Annotations;
+
 using Newtonsoft.Json;
 using PInvoke;
 using Serilog;
@@ -47,10 +50,11 @@ public sealed class EntryPoint
     public delegate IntPtr VehDelegate();
 
     /// <summary>
-    /// Initialize Dalamud.
+    /// Initializes Dalamud. Called from dllmain.cpp.
     /// </summary>
     /// <param name="infoPtr">Pointer to a serialized <see cref="DalamudStartInfo"/> data.</param>
     /// <param name="mainThreadContinueEvent">Event used to signal the main thread to continue.</param>
+    [UsedImplicitly]
     public static void Initialize(IntPtr infoPtr, IntPtr mainThreadContinueEvent)
     {
         var infoStr = Marshal.PtrToStringUTF8(infoPtr)!;
@@ -59,13 +63,14 @@ public sealed class EntryPoint
         if ((info.BootWaitMessageBox & 4) != 0)
             MessageBoxW(IntPtr.Zero, "Press OK to continue (BeforeDalamudConstruct)", "Dalamud Boot", MessageBoxType.Ok);
 
-        new Thread(() => RunThread(info, mainThreadContinueEvent)).Start();
+        Task.Run(() => RunThread(info, mainThreadContinueEvent));
     }
 
     /// <summary>
-    /// Returns stack trace.
+    /// Returns stack trace. Called from veh.cpp.
     /// </summary>
     /// <returns>HGlobal to wchar_t* stack trace c-string.</returns>
+    [UsedImplicitly]
     public static IntPtr VehCallback()
     {
         try
@@ -127,11 +132,11 @@ public sealed class EntryPoint
     }
 
     /// <summary>
-    /// Initialize all Dalamud subsystems and start running on the main thread.
+    /// Initialize all Dalamud subsystems.
     /// </summary>
     /// <param name="info">The <see cref="DalamudStartInfo"/> containing information needed to initialize Dalamud.</param>
     /// <param name="mainThreadContinueEvent">Event used to signal the main thread to continue.</param>
-    private static void RunThread(DalamudStartInfo info, IntPtr mainThreadContinueEvent)
+    private static async Task RunThread(DalamudStartInfo info, IntPtr mainThreadContinueEvent)
     {
         // Setup logger
         InitLogging(info.LogPath!, info.BootShowConsole, true, info.LogName);
@@ -178,32 +183,30 @@ public sealed class EntryPoint
             var dalamud = new Dalamud(info, fs, configuration, mainThreadContinueEvent);
             Log.Information("This is Dalamud - Core: {GitHash}, CS: {CsGitHash} [{CsVersion}]", Util.GetGitHash(), Util.GetGitHashClientStructs(), FFXIVClientStructs.Interop.Resolver.Version);
 
-            dalamud.WaitForUnload();
-
-            try
-            {
-                ServiceManager.UnloadAllServices();
-            }
-            catch (Exception ex)
-            {
-                Log.Fatal(ex, "Could not unload services.");
-                unloadFailed = true;
-            }
+            await dalamud.WaitForUnloadAsync();
         }
         catch (Exception ex)
         {
             Log.Fatal(ex, "Unhandled exception on main thread.");
         }
-        finally
-        {
-            TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
-            if (!info.NoExceptionHandlers)
-                AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
 
-            Log.Information("Session has ended.");
-            Log.CloseAndFlush();
-            SerilogEventSink.Instance.LogLine -= SerilogOnLogLine;
+        try
+        {
+            await ServiceManager.UnloadAllServices();
         }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "Could not unload services.");
+            unloadFailed = true;
+        }
+        
+        TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
+        if (!info.NoExceptionHandlers)
+            AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
+
+        Log.Information("Session has ended.");
+        Log.CloseAndFlush();
+        SerilogEventSink.Instance.LogLine -= SerilogOnLogLine;
 
         // If we didn't unload services correctly, we need to kill the process.
         // We will never signal to Framework.

@@ -15,7 +15,7 @@ namespace Dalamud.Plugin.Internal.Types;
 /// This class represents a dev plugin and all facets of its lifecycle.
 /// The DLL on disk, dependencies, loaded assembly, etc.
 /// </summary>
-internal class LocalDevPlugin : LocalPlugin, IDisposable
+internal class LocalDevPlugin : LocalPlugin
 {
     private static readonly ModuleLog Log = new("PLUGIN");
 
@@ -100,13 +100,14 @@ internal class LocalDevPlugin : LocalPlugin, IDisposable
     public Guid DevImposedWorkingPluginId => this.devSettings.WorkingPluginId;
 
     /// <inheritdoc/>
-    public new void Dispose()
+    public override void Dispose()
     {
         if (this.fileWatcher != null)
         {
             this.fileWatcher.Changed -= this.OnFileChanged;
             this.fileWatcherTokenSource.Cancel();
             this.fileWatcher.Dispose();
+            this.fileWatcher = null;
         }
 
         base.Dispose();

@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Dalamud.IoC;
 using Dalamud.IoC.Internal;
 using Dalamud.Utility.Timing;
-using JetBrains.Annotations;
 
 namespace Dalamud;
 
@@ -204,6 +203,42 @@ internal static class Service<T> where T : IServiceType
     }
 
     /// <summary>
+    /// Unloads this service.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the unload process.</returns>
+    public static async Task Unset()
+    {
+        if (!instanceTcs.Task.IsCompletedSuccessfully)
+            return;
+
+        var unloadTcs = new TaskCompletionSource<T>();
+        try
+        {
+            switch (instanceTcs.Task.Result)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    ServiceManager.Log.Debug("Service<{0}>: Invoking DisposeAsync", typeof(T).Name);
+                    await asyncDisposable.DisposeAsync();
+                    break;
+                case IDisposable disposable:
+                    ServiceManager.Log.Debug("Service<{0}>: Invoking Dispose", typeof(T).Name);
+                    disposable.Dispose();
+                    break;
+            }
+
+            unloadTcs.SetException(new UnloadedException(null));
+            ServiceManager.Log.Debug("Service<{0}>: Unset", typeof(T).Name);
+        }
+        catch (Exception e)
+        {
+            unloadTcs.SetException(new UnloadedException(e));
+            ServiceManager.Log.Warning(e, "Service<{0}>: Dispose failure", typeof(T).Name);
+        }
+
+        instanceTcs = unloadTcs;
+    }
+
+    /// <summary>
     /// Starts the service loader. Only to be called from <see cref="ServiceManager"/>.
     /// </summary>
     /// <param name="additionalProvidedTypedObjects">Additional objects available to constructors.</param>
@@ -291,35 +326,6 @@ internal static class Service<T> where T : IServiceType
         }));
     }
 
-    [UsedImplicitly]
-    private static void Unset()
-    {
-        if (!instanceTcs.Task.IsCompletedSuccessfully)
-            return;
-
-        var instance = instanceTcs.Task.Result;
-        if (instance is IDisposable disposable)
-        {
-            ServiceManager.Log.Debug("Service<{0}>: Disposing", typeof(T).Name);
-            try
-            {
-                disposable.Dispose();
-                ServiceManager.Log.Debug("Service<{0}>: Disposed", typeof(T).Name);
-            }
-            catch (Exception e)
-            {
-                ServiceManager.Log.Warning(e, "Service<{0}>: Dispose failure", typeof(T).Name);
-            }
-        }
-        else
-        {
-            ServiceManager.Log.Debug("Service<{0}>: Unset", typeof(T).Name);
-        }
-
-        instanceTcs = new TaskCompletionSource<T>();
-        instanceTcs.SetException(new UnloadedException());
-    }
-
     private static ConstructorInfo? GetServiceConstructor()
     {
         const BindingFlags ctorBindingFlags =
@@ -401,8 +407,9 @@ internal static class Service<T> where T : IServiceType
         /// <summary>
         /// Initializes a new instance of the <see cref="UnloadedException"/> class.
         /// </summary>
-        public UnloadedException()
-            : base("Service is unloaded.")
+        /// <param name="innerException">The inner exception, if any.</param>
+        public UnloadedException(Exception? innerException)
+            : base("Service is unloaded.", innerException)
         {
         }
     }
@@ -438,6 +445,19 @@ internal static class ServiceHelpers
                    null,
                    new object?[] { includeUnloadDependencies }) ?? new List<Type>();
     }
+
+    /// <summary>
+    /// Unloads a service.
+    /// </summary>
+    /// <param name="serviceType">The <see cref="Service{T}"/> type to unset.</param>
+    /// <returns>A task representing the unload process..</returns>
+    public static Task Unset(Type serviceType) =>
+        (Task)serviceType.InvokeMember(
+            nameof(Service<IServiceType>.Unset),
+            BindingFlags.InvokeMethod | BindingFlags.Static | BindingFlags.Public,
+            null,
+            null,
+            null)!;
 
     /// <summary>
     /// Get the <see cref="Service{T}"/> type for a given service type.

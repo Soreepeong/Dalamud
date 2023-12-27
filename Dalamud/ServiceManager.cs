@@ -375,7 +375,7 @@ internal static class ServiceManager
                 tasks.RemoveAll(x => x.IsCompleted);
             }
 
-            UnloadAllServices();
+            await UnloadAllServices();
 
             throw;
         }
@@ -384,15 +384,9 @@ internal static class ServiceManager
     /// <summary>
     /// Unloads all services, in the reverse order of load.
     /// </summary>
-    public static void UnloadAllServices()
+    /// <returns>A <see cref="Task"/> representing the unload status.</returns>
+    public static async Task UnloadAllServices()
     {
-        var framework = Service<Framework>.GetNullable(Service<Framework>.ExceptionPropagationMode.None);
-        if (framework is { IsInFrameworkUpdateThread: false, IsFrameworkUnloading: false })
-        {
-            framework.RunOnFrameworkThread(UnloadAllServices).Wait();
-            return;
-        }
-
         unloadResetEvent.Reset();
 
         var dependencyServicesMap = new Dictionary<Type, IReadOnlyCollection<Type>>();
@@ -445,15 +439,7 @@ internal static class ServiceManager
         foreach (var type in unloadOrder)
         {
             Log.Verbose("Unload {Type}", type.FullName!);
-
-            typeof(Service<>)
-                    .MakeGenericType(type)
-                    .InvokeMember(
-                        "Unset",
-                        BindingFlags.InvokeMethod | BindingFlags.Static | BindingFlags.NonPublic,
-                        null,
-                        null,
-                        null);
+            await ServiceHelpers.Unset(ServiceHelpers.GetAsService(type)).ConfigureAwait(false);
         }
         
 #if DEBUG
