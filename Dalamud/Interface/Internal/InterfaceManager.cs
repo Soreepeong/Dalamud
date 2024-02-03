@@ -70,13 +70,12 @@ internal class InterfaceManager : IDisposable, IServiceType
     private readonly List<DalamudTextureWrap> deferredDisposeTextures = new();
 
     [ServiceManager.ServiceDependency]
-    private readonly Framework framework = Service<Framework>.Get();
-    
-    [ServiceManager.ServiceDependency]
     private readonly WndProcHookManager wndProcHookManager = Service<WndProcHookManager>.Get();
     
     [ServiceManager.ServiceDependency]
     private readonly DalamudIme dalamudIme = Service<DalamudIme>.Get();
+
+    private readonly TaskCompletionSource<IFontAtlas> dalamudAtlasTcs = new();
 
     private readonly SwapChainVtableResolver address = new();
     private readonly Hook<SetCursorDelegate> setCursorHook;
@@ -462,9 +461,20 @@ internal class InterfaceManager : IDisposable, IServiceType
 
     private static InterfaceManager WhenFontsReady()
     {
-        var im = Service<InterfaceManager>.GetNullable();
-        if (im?.dalamudAtlas is not { } atlas)
-            throw new InvalidOperationException($"Tried to access fonts before {nameof(ContinueConstruction)} call.");
+        var im = Service<InterfaceManager>.Get();
+        if (im.dalamudAtlas is not { } atlas)
+        {
+            var stack = new StackTrace();
+            if (Service<PluginManager>.GetNullable()?.FindCallingPlugin(stack) is not { } plugin)
+                throw new InvalidOperationException("Dalamud: Do not access fonts outside the context of UI.");
+
+            Log.Information(
+                "[IM] {pluginName}: {wfr} called but atlas is not ready; waiting.\n{stack}",
+                plugin.Name,
+                nameof(WhenFontsReady),
+                stack);
+            atlas = im.dalamudAtlasTcs.Task.GetAwaiter().GetResult();
+        }
 
         if (!ThreadSafety.IsMainThread && nextNonMainThreadFontAccessWarningCheck < Environment.TickCount64)
         {
@@ -705,75 +715,85 @@ internal class InterfaceManager : IDisposable, IServiceType
         Framework framework,
         FontAtlasFactory fontAtlasFactory)
     {
-        this.dalamudAtlas = fontAtlasFactory
-            .CreateFontAtlas(nameof(InterfaceManager), FontAtlasAutoRebuildMode.Disable);
-        using (this.dalamudAtlas.SuppressAutoRebuild())
-        {
-            this.DefaultFontHandle = (IFontHandle.IInternal)this.dalamudAtlas.NewDelegateFontHandle(
-                e => e.OnPreBuild(tk => tk.AddDalamudDefaultFont(DefaultFontSizePx)));
-            this.IconFontHandle = (IFontHandle.IInternal)this.dalamudAtlas.NewDelegateFontHandle(
-                e => e.OnPreBuild(
-                    tk => tk.AddFontAwesomeIconFont(
-                        new()
-                        {
-                            SizePx = DefaultFontSizePx,
-                            GlyphMinAdvanceX = DefaultFontSizePx,
-                            GlyphMaxAdvanceX = DefaultFontSizePx,
-                        })));
-            this.MonoFontHandle = (IFontHandle.IInternal)this.dalamudAtlas.NewDelegateFontHandle(
-                e => e.OnPreBuild(
-                    tk => tk.AddDalamudAssetFont(
-                        DalamudAsset.InconsolataRegular,
-                        new() { SizePx = DefaultFontSizePx })));
-            this.dalamudAtlas.BuildStepChange += e => e.OnPostPromotion(
-                tk =>
-                {
-                    // Note: the first call of this function is done outside the main thread; this is expected.
-                    // Do not use DefaultFont, IconFont, and MonoFont.
-                    // Use font handles directly.
-
-                    using var defaultFont = this.DefaultFontHandle.Lock();
-                    using var monoFont = this.MonoFontHandle.Lock();
-
-                    // Fill missing glyphs in MonoFont from DefaultFont
-                    tk.CopyGlyphsAcrossFonts(defaultFont, monoFont, true);
-
-                    // Update default font
-                    unsafe
-                    {
-                        ImGui.GetIO().NativePtr->FontDefault = defaultFont;
-                    }
-
-                    // Broadcast to auto-rebuilding instances
-                    this.AfterBuildFonts?.Invoke();
-                });
-        }
-
-        // This will wait for scene on its own. We just wait for this.dalamudAtlas.BuildTask in this.InitScene.
-        _ = this.dalamudAtlas.BuildFontsAsync(false);
-
-        this.address.Setup(sigScanner);
-
         try
         {
-            if (Service<DalamudConfiguration>.Get().WindowIsImmersive)
-                this.SetImmersiveMode(true);
+            this.dalamudAtlas = fontAtlasFactory
+                .CreateFontAtlas(nameof(InterfaceManager), FontAtlasAutoRebuildMode.Disable);
+            using (this.dalamudAtlas.SuppressAutoRebuild())
+            {
+                this.DefaultFontHandle = (IFontHandle.IInternal)this.dalamudAtlas.NewDelegateFontHandle(
+                    e => e.OnPreBuild(tk => tk.AddDalamudDefaultFont(DefaultFontSizePx)));
+                this.IconFontHandle = (IFontHandle.IInternal)this.dalamudAtlas.NewDelegateFontHandle(
+                    e => e.OnPreBuild(
+                        tk => tk.AddFontAwesomeIconFont(
+                            new()
+                            {
+                                SizePx = DefaultFontSizePx,
+                                GlyphMinAdvanceX = DefaultFontSizePx,
+                                GlyphMaxAdvanceX = DefaultFontSizePx,
+                            })));
+                this.MonoFontHandle = (IFontHandle.IInternal)this.dalamudAtlas.NewDelegateFontHandle(
+                    e => e.OnPreBuild(
+                        tk => tk.AddDalamudAssetFont(
+                            DalamudAsset.InconsolataRegular,
+                            new() { SizePx = DefaultFontSizePx })));
+                this.dalamudAtlas.BuildStepChange += e => e.OnPostPromotion(
+                    tk =>
+                    {
+                        // Note: the first call of this function is done outside the main thread; this is expected.
+                        // Do not use DefaultFont, IconFont, and MonoFont.
+                        // Use font handles directly.
+
+                        using var defaultFont = this.DefaultFontHandle.Lock();
+                        using var monoFont = this.MonoFontHandle.Lock();
+
+                        // Fill missing glyphs in MonoFont from DefaultFont
+                        tk.CopyGlyphsAcrossFonts(defaultFont, monoFont, true);
+
+                        // Update default font
+                        unsafe
+                        {
+                            ImGui.GetIO().NativePtr->FontDefault = defaultFont;
+                        }
+
+                        // Broadcast to auto-rebuilding instances
+                        this.AfterBuildFonts?.Invoke();
+                    });
+            }
+
+            // This will wait for scene on its own. We just wait for this.dalamudAtlas.BuildTask in this.InitScene.
+            _ = this.dalamudAtlas.BuildFontsAsync(false);
+
+            this.address.Setup(sigScanner);
+
+            try
+            {
+                if (Service<DalamudConfiguration>.Get().WindowIsImmersive)
+                    this.SetImmersiveMode(true);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Could not enable immersive mode");
+            }
+
+            this.presentHook = Hook<PresentDelegate>.FromAddress(this.address.Present, this.PresentDetour);
+            this.resizeBuffersHook =
+                Hook<ResizeBuffersDelegate>.FromAddress(this.address.ResizeBuffers, this.ResizeBuffersDetour);
+
+            Log.Verbose("===== S W A P C H A I N =====");
+            Log.Verbose($"Present address 0x{this.presentHook!.Address.ToInt64():X}");
+            Log.Verbose($"ResizeBuffers address 0x{this.resizeBuffersHook!.Address.ToInt64():X}");
+
+            this.setCursorHook.Enable();
+            this.presentHook.Enable();
+            this.resizeBuffersHook.Enable();
+
+            this.dalamudAtlasTcs.SetResult(this.dalamudAtlas);
         }
-        catch (Exception ex)
+        catch (Exception e)
         {
-            Log.Error(ex, "Could not enable immersive mode");
+            this.dalamudAtlasTcs.SetException(e);
         }
-
-        this.presentHook = Hook<PresentDelegate>.FromAddress(this.address.Present, this.PresentDetour);
-        this.resizeBuffersHook = Hook<ResizeBuffersDelegate>.FromAddress(this.address.ResizeBuffers, this.ResizeBuffersDetour);
-
-        Log.Verbose("===== S W A P C H A I N =====");
-        Log.Verbose($"Present address 0x{this.presentHook!.Address.ToInt64():X}");
-        Log.Verbose($"ResizeBuffers address 0x{this.resizeBuffersHook!.Address.ToInt64():X}");
-
-        this.setCursorHook.Enable();
-        this.presentHook.Enable();
-        this.resizeBuffersHook.Enable();
     }
 
     private IntPtr ResizeBuffersDetour(IntPtr swapChain, uint bufferCount, uint width, uint height, uint newFormat, uint swapChainFlags)
