@@ -63,7 +63,7 @@ internal sealed partial class TextureManager : IServiceType, IDisposable, ITextu
         this.wicManager = new(this);
     }
 
-    /// <summary>Gets the D3D11 Device used to create textures.</summary>
+    /// <summary>Gets the D3D11 Device used to create textures. Ownership is not transferred.</summary>
     public unsafe ComPtr<ID3D11Device> Device
     {
         get

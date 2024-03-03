@@ -123,6 +123,31 @@ internal class TexWidget : IDataWindowWidget
             ImGui.PopID();
         }
 
+        ImGui.Dummy(new(ImGui.GetTextLineHeightWithSpacing()));
+
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Capture: ");
+        if (ImGui.Button("Game"))
+            this.addedTextures.Add(new() { Api10 = this.textureManager.CreateFromGameScreen() });
+
+        ImGui.SameLine();
+        if (ImGui.Button("Game (Auto)"))
+            this.addedTextures.Add(new() { Api10 = this.textureManager.CreateFromGameScreen(true) });
+
+        ImGui.SameLine();
+        if (ImGui.Button("Main Viewport"))
+        {
+            this.addedTextures.Add(
+                new() { Api10 = this.textureManager.CreateFromImGuiViewport(ImGui.GetMainViewport().ID) });
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Main Viewport (Auto)"))
+        {
+            this.addedTextures.Add(
+                new() { Api10 = this.textureManager.CreateFromImGuiViewport(ImGui.GetMainViewport().ID, true) });
+        }
+
         if (ImGui.CollapsingHeader(nameof(ITextureProvider.GetFromGameIcon), ImGuiTreeNodeFlags.DefaultOpen))
         {
             ImGui.PushID(nameof(this.DrawGetFromGameIcon));

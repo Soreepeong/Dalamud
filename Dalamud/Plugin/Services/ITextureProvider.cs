@@ -10,7 +10,11 @@ using Dalamud.Interface;
 using Dalamud.Interface.Internal;
 using Dalamud.Interface.Textures;
 
+using ImGuiNET;
+
 using Lumina.Data.Files;
+
+using TerraFX.Interop.DirectX;
 
 namespace Dalamud.Plugin.Services;
 
@@ -51,8 +55,27 @@ public partial interface ITextureProvider
         IDalamudTextureWrap wrap,
         Vector2 uv0,
         Vector2 uv1,
-        int dxgiFormat = 0,
+        int dxgiFormat = (int)DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM,
         bool leaveWrapOpen = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Creates a texture from the game screen, before rendering Dalamud.</summary>
+    /// <param name="autoUpdate">If <c>true</c>, automatically update the underlying texture.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A <see cref="Task{TResult}"/> containing the copied texture on success. Dispose after use.</returns>
+    Task<IDalamudTextureWrap> CreateFromGameScreen(
+        bool autoUpdate = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Creates a texture from the game screen, before rendering Dalamud.</summary>
+    /// <param name="viewportId">The viewport ID.</param>
+    /// <param name="autoUpdate">If <c>true</c>, automatically update the underlying texture.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A <see cref="Task{TResult}"/> containing the copied texture on success. Dispose after use.</returns>
+    /// <remarks>Use <c>ImGui.GetMainViewport().ID</c> to capture the game screen with Dalamud rendered.</remarks>
+    Task<IDalamudTextureWrap> CreateFromImGuiViewport(
+        uint viewportId,
+        bool autoUpdate = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>Gets a texture from the given bytes, trying to interpret it as a .tex file or other well-known image

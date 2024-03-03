@@ -108,6 +108,49 @@ internal sealed partial class TextureManager
     }
 
     /// <inheritdoc/>
+    public Task<IDalamudTextureWrap> CreateFromGameScreen(
+        bool autoUpdate = false,
+        CancellationToken cancellationToken = default) =>
+        this.interfaceManager.RunBeforeImGuiRender(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var t = new ViewportTextureWrap(ImGui.GetMainViewport().ID, true, autoUpdate, cancellationToken);
+                t.Update();
+                try
+                {
+                    return t.FirstUpdateTask.Result;
+                }
+                catch
+                {
+                    t.Dispose();
+                    throw;
+                }
+            });
+
+    /// <inheritdoc/>
+    public Task<IDalamudTextureWrap> CreateFromImGuiViewport(
+        uint viewportId,
+        bool autoUpdate = false,
+        CancellationToken cancellationToken = default) =>
+        this.interfaceManager.RunBeforeImGuiRender(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var t = new ViewportTextureWrap(viewportId, false, autoUpdate, cancellationToken);
+                t.Update();
+                try
+                {
+                    return t.FirstUpdateTask.Result;
+                }
+                catch
+                {
+                    t.Dispose();
+                    throw;
+                }
+            });
+
+    /// <inheritdoc/>
     Task<(RawImageSpecification Specification, byte[] RawData)> ITextureProvider.GetRawDataFromExistingTextureAsync(
         IDalamudTextureWrap wrap,
         Vector2 uv0,
@@ -167,7 +210,7 @@ internal sealed partial class TextureManager
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return await this.interfaceManager.RunBeforePresent(
+        return await this.interfaceManager.RunBeforeImGuiRender(
                    () => ExtractMappedResource(this.Device, context, tex2D, cancellationToken));
 
         static unsafe (RawImageSpecification Specification, byte[] RawData) ExtractMappedResource(
@@ -280,7 +323,7 @@ internal sealed partial class TextureManager
             this.Device.Get()->CreateTexture2D(&tex2DCopyTempDesc, null, tex2DCopyTemp.GetAddressOf()).ThrowOnError();
         }
 
-        await this.interfaceManager.RunBeforePresent(
+        await this.interfaceManager.RunBeforeImGuiRender(
             () =>
             {
                 unsafe
