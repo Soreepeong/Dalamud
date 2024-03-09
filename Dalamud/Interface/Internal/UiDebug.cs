@@ -1,13 +1,13 @@
-using System;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
-using Dalamud.Game;
 using Dalamud.Game.Gui;
+using Dalamud.Interface.SeStringRenderer.Internal;
 using Dalamud.Interface.Utility;
 using Dalamud.Memory;
 using Dalamud.Utility;
+
+using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using ImGuiNET;
 
@@ -205,7 +205,7 @@ internal unsafe class UiDebug
             {
                 case NodeType.Text:
                     var textNode = (AtkTextNode*)node;
-                    ImGui.Text($"text: {MemoryHelper.ReadSeStringAsString(out _, (nint)textNode->NodeText.StringPtr)}");
+                    this.DrawSeString("text: ", &textNode->NodeText);
 
                     ImGui.InputText($"Replace Text##{(ulong)textNode:X}", new IntPtr(textNode->NodeText.StringPtr), (uint)textNode->NodeText.BufSize);
 
@@ -232,7 +232,7 @@ internal unsafe class UiDebug
                     break;
                 case NodeType.Counter:
                     var counterNode = (AtkCounterNode*)node;
-                    ImGui.Text($"text: {MemoryHelper.ReadSeStringAsString(out _, (nint)counterNode->NodeText.StringPtr)}");
+                    this.DrawSeString("text: ", &counterNode->NodeText);
                     break;
                 case NodeType.Image:
                     var imageNode = (AtkImageNode*)node;
@@ -250,11 +250,7 @@ internal unsafe class UiDebug
                             if (texType == TextureType.Resource)
                             {
                                 var texFileNameStdString = &textureInfo->AtkTexture.Resource->TexFileResourceHandle->ResourceHandle.FileName;
-                                var texString = texFileNameStdString->Length < 16
-                                                    ? MemoryHelper.ReadSeStringAsString(out _, (nint)texFileNameStdString->Buffer)
-                                                    : MemoryHelper.ReadSeStringAsString(out _, (nint)texFileNameStdString->BufferPtr);
-
-                                ImGui.Text($"texture path: {texString}");
+                                this.DrawUtf8String("texture path: ", texFileNameStdString->AsSpan());
                                 var kernelTexture = textureInfo->AtkTexture.Resource->KernelTextureObject;
 
                                 if (ImGui.TreeNode($"Texture##{(ulong)kernelTexture->D3D11ShaderResourceView:X}"))
@@ -353,13 +349,13 @@ internal unsafe class UiDebug
             {
                 case ComponentType.TextInput:
                     var textInputComponent = (AtkComponentTextInput*)compNode->Component;
-                    ImGui.Text($"InputBase Text1: {MemoryHelper.ReadSeStringAsString(out _, new IntPtr(textInputComponent->AtkComponentInputBase.UnkText1.StringPtr))}");
-                    ImGui.Text($"InputBase Text2: {MemoryHelper.ReadSeStringAsString(out _, new IntPtr(textInputComponent->AtkComponentInputBase.UnkText2.StringPtr))}");
-                    ImGui.Text($"Text1: {MemoryHelper.ReadSeStringAsString(out _, new IntPtr(textInputComponent->UnkText1.StringPtr))}");
-                    ImGui.Text($"Text2: {MemoryHelper.ReadSeStringAsString(out _, new IntPtr(textInputComponent->UnkText2.StringPtr))}");
-                    ImGui.Text($"Text3: {MemoryHelper.ReadSeStringAsString(out _, new IntPtr(textInputComponent->UnkText3.StringPtr))}");
-                    ImGui.Text($"Text4: {MemoryHelper.ReadSeStringAsString(out _, new IntPtr(textInputComponent->UnkText4.StringPtr))}");
-                    ImGui.Text($"Text5: {MemoryHelper.ReadSeStringAsString(out _, new IntPtr(textInputComponent->UnkText5.StringPtr))}");
+                    this.DrawUtf8String("InputBase Text1: ", MemoryHelper.ReadSeStringReadOnlySpan(&textInputComponent->AtkComponentInputBase.UnkText1));
+                    this.DrawUtf8String("InputBase Text2: ", MemoryHelper.ReadSeStringReadOnlySpan(&textInputComponent->AtkComponentInputBase.UnkText2));
+                    this.DrawUtf8String("Text1: ", MemoryHelper.ReadSeStringReadOnlySpan(&textInputComponent->UnkText1));
+                    this.DrawUtf8String("Text2: ", MemoryHelper.ReadSeStringReadOnlySpan(&textInputComponent->UnkText2));
+                    this.DrawUtf8String("Text3: ", MemoryHelper.ReadSeStringReadOnlySpan(&textInputComponent->UnkText3));
+                    this.DrawUtf8String("Text4: ", MemoryHelper.ReadSeStringReadOnlySpan(&textInputComponent->UnkText4));
+                    this.DrawUtf8String("Text5: ", MemoryHelper.ReadSeStringReadOnlySpan(&textInputComponent->UnkText5));
                     break;
             }
 
@@ -591,5 +587,19 @@ internal unsafe class UiDebug
         position += ImGuiHelpers.MainViewport.Pos;
 
         ImGui.GetForegroundDrawList(ImGuiHelpers.MainViewport).AddRect(position, position + size, nodeVisible ? 0xFF00FF00 : 0xFF0000FF);
+    }
+
+    private void DrawSeString(string prefix, Utf8String* u8)
+    {
+        using var ctr = Service<SeStringRendererFactory>.Get().RentAsDummy();
+        ctr.AddText(prefix);
+        ctr.AddSeString(MemoryHelper.ReadSeStringReadOnlySpan(u8));
+    }
+
+    private void DrawUtf8String(string prefix, ReadOnlySpan<byte> u8)
+    {
+        using var ctr = Service<SeStringRendererFactory>.Get().RentAsDummy();
+        ctr.AddText(prefix);
+        ctr.AddText(u8);
     }
 }

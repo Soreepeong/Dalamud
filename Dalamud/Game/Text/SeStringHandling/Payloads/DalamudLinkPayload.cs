@@ -1,7 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Text;
 
 namespace Dalamud.Game.Text.SeStringHandling.Payloads;
 
@@ -32,27 +29,41 @@ public class DalamudLinkPayload : Payload
     /// <inheritdoc/>
     protected override byte[] EncodeImpl()
     {
-        var pluginBytes = Encoding.UTF8.GetBytes(this.Plugin);
-        var commandBytes = MakeInteger(this.CommandId);
-        var chunkLen = 3 + pluginBytes.Length + commandBytes.Length;
+        var bodyLength = 0;
+        bodyLength += SeStringExpressionUtilities.CalculateLengthInt((int)EmbeddedInfoType.DalamudLink - 1);
+        bodyLength += SeStringExpressionUtilities.CalculateLengthString(this.Plugin);
+        bodyLength += SeStringExpressionUtilities.CalculateLengthUInt(this.CommandId);
 
-        if (chunkLen > 255)
-        {
-            throw new Exception("Chunk is too long. Plugin name exceeds limits for DalamudLinkPayload");
-        }
+        var envelopeLength = 0;
+        envelopeLength += 1; // START_BYTE
+        envelopeLength += 1; // SeStringChunkType.Interactable
+        envelopeLength += SeStringExpressionUtilities.CalculateLengthInt(bodyLength);
+        envelopeLength += bodyLength;
+        envelopeLength += 1; // END_BYTE;
 
-        var bytes = new List<byte> { START_BYTE, (byte)SeStringChunkType.Interactable, (byte)chunkLen, (byte)EmbeddedInfoType.DalamudLink };
-        bytes.Add((byte)pluginBytes.Length);
-        bytes.AddRange(pluginBytes);
-        bytes.AddRange(commandBytes);
-        bytes.Add(END_BYTE);
-        return bytes.ToArray();
+        var buf = new byte[envelopeLength];
+        var bufSpan = buf.AsSpan();
+        bufSpan = SeStringExpressionUtilities.WriteRaw(bufSpan, START_BYTE);
+        bufSpan = SeStringExpressionUtilities.WriteRaw(bufSpan, (byte)SeStringChunkType.Interactable);
+        bufSpan = SeStringExpressionUtilities.EncodeInt(bufSpan, bodyLength);
+
+        bufSpan = SeStringExpressionUtilities.EncodeInt(bufSpan, (int)EmbeddedInfoType.DalamudLink - 1);
+        bufSpan = SeStringExpressionUtilities.EncodeString(bufSpan, this.Plugin);
+        bufSpan = SeStringExpressionUtilities.EncodeUInt(bufSpan, this.CommandId);
+
+        bufSpan = SeStringExpressionUtilities.WriteRaw(bufSpan, END_BYTE);
+
+        if (!bufSpan.IsEmpty)
+            throw new InvalidOperationException();
+
+        return buf;
     }
 
     /// <inheritdoc/>
     protected override void DecodeImpl(BinaryReader reader, long endOfStream)
     {
-        this.Plugin = Encoding.UTF8.GetString(reader.ReadBytes(reader.ReadByte()));
+        // Note: Payload.DecodeChunk already took the first int expr (DalamudLink).
+        this.Plugin = GetStringAssumeUtf8Only(reader);
         this.CommandId = GetInteger(reader);
     }
 }

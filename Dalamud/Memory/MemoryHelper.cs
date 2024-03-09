@@ -4,7 +4,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.Text.SeStringHandling.SeStringSpan;
 using Dalamud.Memory.Exceptions;
+using Dalamud.Utility;
 
 using FFXIVClientStructs.FFXIV.Client.System.Memory;
 using FFXIVClientStructs.FFXIV.Client.System.String;
@@ -14,7 +16,6 @@ using Microsoft.Extensions.ObjectPool;
 using static Dalamud.NativeFunctions;
 
 using LPayloadType = Lumina.Text.Payloads.PayloadType;
-using LSeString = Lumina.Text.SeString;
 
 // Heavily inspired from Reloaded (https://github.com/Reloaded-Project/Reloaded.Memory)
 
@@ -385,6 +386,27 @@ public static unsafe class MemoryHelper
     public static SeString ReadSeString(Utf8String* utf8String) =>
         utf8String == null ? string.Empty : SeString.Parse(utf8String->AsSpan());
 
+    /// <summary>Reads a null-terminated SeString as a <see cref="SeStringReadOnlySpan"/>.</summary>
+    /// <param name="memoryAddress">The memory address to read from.</param>
+    /// <returns>The read-only span view of the string.</returns>
+    public static SeStringReadOnlySpan ReadSeStringReadOnlySpan(nint memoryAddress) =>
+        new(MemoryMarshal.CreateReadOnlySpanFromNullTerminated((byte*)memoryAddress));
+
+    /// <summary>Reads a null-terminated SeString as a <see cref="SeStringReadOnlySpan"/>.</summary>
+    /// <param name="memoryAddress">The memory address to read from.</param>
+    /// <param name="maxLength">The maximum length of the string.</param>
+    /// <returns>The read-only span view of the string.</returns>
+    public static SeStringReadOnlySpan ReadSeStringReadOnlySpan(nint memoryAddress, int maxLength) =>
+        // Note that a valid SeString never contains a null character, other than for the sequence terminator purpose.
+        new(CastNullTerminated<byte>(memoryAddress, maxLength));
+
+    /// <summary>Reads a null-terminated SeString as a <see cref="SeStringReadOnlySpan"/>.</summary>
+    /// <param name="utf8String">The memory address to read from.</param>
+    /// <returns>The read-only span view of the string.</returns>
+    public static SeStringReadOnlySpan ReadSeStringReadOnlySpan(Utf8String* utf8String) =>
+        // Note that a valid SeString never contains a null character, other than for the sequence terminator purpose.
+        utf8String == null ? default : new(utf8String->AsSpan());
+
     /// <summary>
     /// Reads an SeString from a specified memory address, and extracts the outermost string.<br />
     /// If the SeString is malformed, behavior is undefined.
@@ -403,132 +425,64 @@ public static unsafe class MemoryHelper
         bool stopOnFirstNonRepresentedPayload = false,
         string nonRepresentedPayloadReplacement = "*")
     {
+        var sourceSpan = CastNullTerminated<byte>(memoryAddress, maxLength);
         var sb = StringBuilderPool.Get();
-        sb.EnsureCapacity(maxLength = CastNullTerminated<byte>(memoryAddress, maxLength).Length);
+        sb.EnsureCapacity(sourceSpan.Length);
 
-        // 1 utf-8 codepoint can spill up to 2 characters.
-        Span<char> tmp = stackalloc char[2];
+        // 1 codepoint can spill up to 2 characters.
+        Span<char> tmp16 = stackalloc char[2];
 
-        var pin = (byte*)memoryAddress;
         containsNonRepresentedPayload = false;
-        while (*pin != 0 && maxLength > 0)
+        try
         {
-            if (*pin != LSeString.StartByte)
+            foreach (var payload in sourceSpan.AsSeStringSpan())
             {
-                var len = *pin switch
+                switch (payload.Type)
                 {
-                    < 0x80 => 1,
-                    >= 0b11000000 and <= 0b11011111 => 2,
-                    >= 0b11100000 and <= 0b11101111 => 3,
-                    >= 0b11110000 and <= 0b11110111 => 4,
-                    _ => 0,
-                };
-                if (len == 0 || len > maxLength)
-                    break;
+                    case (int)LPayloadType.Text:
+                        foreach (var c in payload.Body.AsUtf8Enumerable())
+                        {
+                            if (c.Codepoint <= 0xFFFF)
+                            {
+                                sb.Append((char)c.Codepoint);
+                            }
+                            else
+                            {
+                                var c32 = c.Codepoint;
+                                var numChars = Encoding.UTF32.GetChars(new((byte*)&c32, 4), tmp16);
+                                sb.Append(tmp16[..numChars]);
+                            }
+                        }
 
-                var numChars = Encoding.UTF8.GetChars(new(pin, len), tmp);
-                sb.Append(tmp[..numChars]);
-                pin += len;
-                maxLength -= len;
-                continue;
+                        break;
+
+                    case (int)LPayloadType.NewLine:
+                        sb.AppendLine();
+                        break;
+
+                    case (int)LPayloadType.Hyphen:
+                        sb.Append('–');
+                        break;
+
+                    case (int)LPayloadType.SoftHyphen:
+                        sb.Append('\u00AD');
+                        break;
+
+                    default:
+                        sb.Append(nonRepresentedPayloadReplacement);
+                        containsNonRepresentedPayload = true;
+                        if (stopOnFirstNonRepresentedPayload)
+                            return sb.ToString();
+
+                        break;
+                }
             }
 
-            // Start byte
-            ++pin;
-            --maxLength;
-
-            // Payload type
-            var payloadType = (LPayloadType)(*pin++);
-
-            // Payload length
-            if (!ReadIntExpression(ref pin, ref maxLength, out var expressionLength))
-                break;
-            if (expressionLength > maxLength)
-                break;
-            pin += expressionLength;
-            maxLength -= unchecked((int)expressionLength);
-
-            // End byte
-            if (*pin++ != LSeString.EndByte)
-                break;
-            --maxLength;
-
-            switch (payloadType)
-            {
-                case LPayloadType.NewLine:
-                    sb.AppendLine();
-                    break;
-                case LPayloadType.Hyphen:
-                    sb.Append('–');
-                    break;
-                case LPayloadType.SoftHyphen:
-                    sb.Append('\u00AD');
-                    break;
-                default:
-                    sb.Append(nonRepresentedPayloadReplacement);
-                    containsNonRepresentedPayload = true;
-                    if (stopOnFirstNonRepresentedPayload)
-                        maxLength = 0;
-                    break;
-            }
+            return sb.ToString();
         }
-
-        var res = sb.ToString();
-        StringBuilderPool.Return(sb);
-        return res;
-
-        static bool ReadIntExpression(ref byte* p, ref int maxLength, out uint value)
+        finally
         {
-            if (maxLength <= 0)
-            {
-                value = 0;
-                return false;
-            }
-
-            var typeByte = *p++;
-            --maxLength;
-
-            switch (typeByte)
-            {
-                case > 0 and < 0xD0:
-                    value = (uint)typeByte - 1;
-                    return true;
-                case >= 0xF0 and <= 0xFE:
-                    ++typeByte;
-                    value = 0u;
-                    if ((typeByte & 8) != 0)
-                    {
-                        if (maxLength <= 0 || *p == 0)
-                            return false;
-                        value |= (uint)*p++ << 24;
-                    }
-
-                    if ((typeByte & 4) != 0)
-                    {
-                        if (maxLength <= 0 || *p == 0)
-                            return false;
-                        value |= (uint)*p++ << 16;
-                    }
-
-                    if ((typeByte & 2) != 0)
-                    {
-                        if (maxLength <= 0 || *p == 0)
-                            return false;
-                        value |= (uint)*p++ << 8;
-                    }
-
-                    if ((typeByte & 1) != 0)
-                    {
-                        if (maxLength <= 0 || *p == 0)
-                            return false;
-                        value |= *p++;
-                    }
-
-                    return true;
-                default:
-                    value = 0;
-                    return false;
-            }
+            StringBuilderPool.Return(sb);
         }
     }
 

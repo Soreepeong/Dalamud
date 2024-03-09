@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Text;
 
 using Dalamud.Data;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
@@ -382,6 +383,18 @@ public abstract partial class Payload
         }
 
         return BitConverter.ToUInt32(ret, 0);
+    }
+
+    /// <summary>Retrieve the string expression, assuming that the string is a simple string.</summary>
+    /// <param name="input">The BinaryReader instance.</param>
+    /// <returns>A string.</returns>
+    protected static string GetStringAssumeUtf8Only(BinaryReader input)
+    {
+        uint marker = input.ReadByte();
+        if (marker != 0xFF)
+            return "<invalid>";
+        var length = GetInteger(input);
+        return Encoding.UTF8.GetString(input.ReadBytes((int)length));
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ using System.Linq;
 using Dalamud.Game.Text;
 using Dalamud.Interface.FontIdentifier;
 using Dalamud.Interface.Internal.Windows.PluginInstaller;
+using Dalamud.Interface.SeStringRenderer;
 using Dalamud.Interface.Style;
 using Dalamud.IoC.Internal;
 using Dalamud.Plugin.Internal.Profiles;
@@ -26,7 +27,7 @@ namespace Dalamud.Configuration.Internal;
 #pragma warning disable SA1015
 [InherentDependency<ReliableFileStorage>] // We must still have this when unloading
 #pragma warning restore SA1015
-internal sealed class DalamudConfiguration : IServiceType, IDisposable
+internal sealed record DalamudConfiguration : IServiceType, IDisposable
 {
     private static readonly JsonSerializerSettings SerializerSettings = new()
     {
@@ -219,6 +220,12 @@ internal sealed class DalamudConfiguration : IServiceType, IDisposable
     /// Gets or sets the number of lines to keep for the Dalamud Console window.
     /// </summary>
     public int LogLinesLimit { get; set; } = 10000;
+
+    /// <summary>
+    /// Gets or sets the log line break mode.
+    /// </summary>
+    public SeStringRendererParams.WordBreakType LogLineBreakMode { get; set; } =
+        SeStringRendererParams.WordBreakType.KeepAll;
 
     /// <summary>
     /// Gets or sets a value indicating whether or not the dev bar should open at startup.

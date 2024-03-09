@@ -3515,7 +3515,7 @@ internal class PluginInstallerWindow : Window, IDisposable
 
         #endregion
 
-        #region Plugin context menu
+        #region Plugref context menu
 
         public static string PluginContext_TestingOptIn => Loc.Localize("InstallerTestingOptIn", "Receive plugin testing versions");
 
