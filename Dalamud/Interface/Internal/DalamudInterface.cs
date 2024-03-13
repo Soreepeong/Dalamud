@@ -12,6 +12,7 @@ using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Gui;
 using Dalamud.Game.Internal;
+using Dalamud.Hooking;
 using Dalamud.Interface.Animation.EasingFunctions;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Internal.ManagedAsserts;
@@ -21,6 +22,7 @@ using Dalamud.Interface.Internal.Windows.PluginInstaller;
 using Dalamud.Interface.Internal.Windows.SelfTest;
 using Dalamud.Interface.Internal.Windows.Settings;
 using Dalamud.Interface.Internal.Windows.StyleEditor;
+using Dalamud.Interface.ManagedFontAtlas.Internals;
 using Dalamud.Interface.Style;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
@@ -59,7 +61,6 @@ internal class DalamudInterface : IDisposable, IServiceType
     private readonly ComponentDemoWindow componentDemoWindow;
     private readonly DataWindow dataWindow;
     private readonly GamepadModeNotifierWindow gamepadModeNotifierWindow;
-    private readonly DalamudImeWindow imeWindow;
     private readonly ConsoleWindow consoleWindow;
     private readonly PluginStatWindow pluginStatWindow;
     private readonly PluginInstallerWindow pluginWindow;
@@ -88,12 +89,13 @@ internal class DalamudInterface : IDisposable, IServiceType
     private bool isImPlotDrawDemoWindow = false;
     private bool isImGuiTestWindowsInMonospace = false;
     private bool isImGuiDrawMetricsWindow = false;
-
+    
     [ServiceManager.ServiceConstructor]
     private DalamudInterface(
         Dalamud dalamud,
         DalamudConfiguration configuration,
-        InterfaceManager.InterfaceManagerWithScene interfaceManagerWithScene,
+        FontAtlasFactory fontAtlasFactory,
+        InterfaceManager interfaceManager,
         PluginImageCache pluginImageCache,
         DalamudAssetManager dalamudAssetManager,
         Game.Framework framework,
@@ -103,7 +105,7 @@ internal class DalamudInterface : IDisposable, IServiceType
     {
         this.dalamud = dalamud;
         this.configuration = configuration;
-        this.interfaceManager = interfaceManagerWithScene.Manager;
+        this.interfaceManager = interfaceManager;
 
         this.WindowSystem = new WindowSystem("DalamudCore");
         
@@ -111,7 +113,6 @@ internal class DalamudInterface : IDisposable, IServiceType
         this.componentDemoWindow = new ComponentDemoWindow() { IsOpen = false };
         this.dataWindow = new DataWindow() { IsOpen = false };
         this.gamepadModeNotifierWindow = new GamepadModeNotifierWindow() { IsOpen = false };
-        this.imeWindow = new DalamudImeWindow() { IsOpen = false };
         this.consoleWindow = new ConsoleWindow(configuration) { IsOpen = configuration.LogOpenAtStartup };
         this.pluginStatWindow = new PluginStatWindow() { IsOpen = false };
         this.pluginWindow = new PluginInstallerWindow(pluginImageCache, configuration) { IsOpen = false };
@@ -122,10 +123,14 @@ internal class DalamudInterface : IDisposable, IServiceType
             clientState,
             configuration,
             dalamudAssetManager,
+            fontAtlasFactory,
             framework,
             gameGui,
             titleScreenMenu) { IsOpen = false };
-        this.changelogWindow = new ChangelogWindow(this.titleScreenMenuWindow) { IsOpen = false };
+        this.changelogWindow = new ChangelogWindow(
+            this.titleScreenMenuWindow,
+            fontAtlasFactory,
+            dalamudAssetManager) { IsOpen = false };
         this.profilerWindow = new ProfilerWindow() { IsOpen = false };
         this.branchSwitcherWindow = new BranchSwitcherWindow() { IsOpen = false };
         this.hitchSettingsWindow = new HitchSettingsWindow() { IsOpen = false };
@@ -135,7 +140,6 @@ internal class DalamudInterface : IDisposable, IServiceType
         this.WindowSystem.AddWindow(this.componentDemoWindow);
         this.WindowSystem.AddWindow(this.dataWindow);
         this.WindowSystem.AddWindow(this.gamepadModeNotifierWindow);
-        this.WindowSystem.AddWindow(this.imeWindow);
         this.WindowSystem.AddWindow(this.consoleWindow);
         this.WindowSystem.AddWindow(this.pluginStatWindow);
         this.WindowSystem.AddWindow(this.pluginWindow);
@@ -182,7 +186,9 @@ internal class DalamudInterface : IDisposable, IServiceType
         this.creditsDarkeningAnimation.Point1 = Vector2.Zero;
         this.creditsDarkeningAnimation.Point2 = new Vector2(CreditsDarkeningMaxAlpha);
     }
-
+    
+    private delegate nint CrashDebugDelegate(nint self);
+    
     /// <summary>
     /// Gets the number of frames since Dalamud has loaded.
     /// </summary>
@@ -207,6 +213,7 @@ internal class DalamudInterface : IDisposable, IServiceType
     {
         this.interfaceManager.Draw -= this.OnDraw;
 
+        this.WindowSystem.Windows.OfType<IDisposable>().AggregateToDisposable().Dispose();
         this.WindowSystem.RemoveAllWindows();
 
         this.changelogWindow.Dispose();
@@ -254,11 +261,6 @@ internal class DalamudInterface : IDisposable, IServiceType
     /// Opens the <see cref="GamepadModeNotifierWindow"/>.
     /// </summary>
     public void OpenGamepadModeNotifierWindow() => this.gamepadModeNotifierWindow.IsOpen = true;
-
-    /// <summary>
-    /// Opens the <see cref="DalamudImeWindow"/>.
-    /// </summary>
-    public void OpenImeWindow() => this.imeWindow.IsOpen = true;
 
     /// <summary>
     /// Opens the <see cref="ConsoleWindow"/>.
@@ -356,11 +358,6 @@ internal class DalamudInterface : IDisposable, IServiceType
     #region Close
 
     /// <summary>
-    /// Closes the <see cref="DalamudImeWindow"/>.
-    /// </summary>
-    public void CloseImeWindow() => this.imeWindow.IsOpen = false;
-
-    /// <summary>
     /// Closes the <see cref="GamepadModeNotifierWindow"/>.
     /// </summary>
     public void CloseGamepadModeNotifierWindow() => this.gamepadModeNotifierWindow.IsOpen = false;
@@ -406,11 +403,6 @@ internal class DalamudInterface : IDisposable, IServiceType
     /// Toggles the <see cref="GamepadModeNotifierWindow"/>.
     /// </summary>
     public void ToggleGamepadModeNotifierWindow() => this.gamepadModeNotifierWindow.Toggle();
-
-    /// <summary>
-    /// Toggles the <see cref="DalamudImeWindow"/>.
-    /// </summary>
-    public void ToggleImeWindow() => this.imeWindow.Toggle();
 
     /// <summary>
     /// Toggles the <see cref="ConsoleWindow"/>.
@@ -660,7 +652,7 @@ internal class DalamudInterface : IDisposable, IServiceType
                     }
 
                     var antiDebug = Service<AntiDebug>.Get();
-                    if (ImGui.MenuItem("Enable AntiDebug", null, antiDebug.IsEnabled))
+                    if (ImGui.MenuItem("Disable Debugging Protections", null, antiDebug.IsEnabled))
                     {
                         var newEnabled = !antiDebug.IsEnabled;
                         if (newEnabled)
@@ -737,28 +729,48 @@ internal class DalamudInterface : IDisposable, IServiceType
                     }
 
                     ImGui.Separator();
-
-                    if (ImGui.MenuItem("Access Violation"))
+                    
+                    if (ImGui.BeginMenu("Crash game"))
                     {
-                        Marshal.ReadByte(IntPtr.Zero);
-                    }
-
-                    if (ImGui.MenuItem("Crash game (nullptr)"))
-                    {
-                        unsafe
+                        if (ImGui.MenuItem("Access Violation"))
                         {
-                            var framework = Framework.Instance();
-                            framework->UIModule = (UIModule*)0;
-                        }
-                    }
-
-                    if (ImGui.MenuItem("Crash game (non-nullptr)"))
-                    {
-                        unsafe
+                            Marshal.ReadByte(IntPtr.Zero);
+                        }                    
+                        
+                        if (ImGui.MenuItem("Set UiModule to NULL"))
                         {
-                            var framework = Framework.Instance();
-                            framework->UIModule = (UIModule*)0x12345678;
+                            unsafe
+                            {
+                                var framework = Framework.Instance();
+                                framework->UIModule = (UIModule*)0;
+                            }
                         }
+                        
+                        if (ImGui.MenuItem("Set UiModule to invalid ptr"))
+                        {
+                            unsafe
+                            {
+                                var framework = Framework.Instance();
+                                framework->UIModule = (UIModule*)0x12345678;
+                            }
+                        }
+                        
+                        if (ImGui.MenuItem("Deref nullptr in Hook"))
+                        {
+                            unsafe
+                            {
+                                var hook = Hook<CrashDebugDelegate>.FromAddress(
+                                    (nint)UIModule.StaticVTable.GetUIInputData,
+                                    self =>
+                                    {
+                                        _ = *(byte*)0;
+                                        return (nint)UIModule.Instance()->GetUIInputData();
+                                    });
+                                hook.Enable();
+                            }
+                        }
+                        
+                        ImGui.EndMenu();
                     }
 
                     if (ImGui.MenuItem("Report crashes at shutdown", null, this.configuration.ReportShutdownCrashes))
@@ -856,9 +868,19 @@ internal class DalamudInterface : IDisposable, IServiceType
 
                 if (ImGui.BeginMenu("Game"))
                 {
-                    if (ImGui.MenuItem("Replace ExceptionHandler"))
+                    if (ImGui.MenuItem("Use in-game default ExceptionHandler"))
                     {
-                        this.dalamud.ReplaceExceptionHandler();
+                        this.dalamud.UseDefaultExceptionHandler();
+                    }
+
+                    if (ImGui.MenuItem("Use in-game debug ExceptionHandler"))
+                    {
+                        this.dalamud.UseDebugExceptionHandler();
+                    }
+
+                    if (ImGui.MenuItem("Disable in-game ExceptionHandler"))
+                    {
+                        this.dalamud.UseNoExceptionHandler();
                     }
 
                     ImGui.EndMenu();
