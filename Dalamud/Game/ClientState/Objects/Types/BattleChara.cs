@@ -1,7 +1,10 @@
 using System;
+using System.Runtime.CompilerServices;
 
 using Dalamud.Game.ClientState.Statuses;
 using Dalamud.Utility;
+
+using Serilog;
 
 namespace Dalamud.Game.ClientState.Objects.Types;
 
@@ -23,7 +26,7 @@ public unsafe class BattleChara : Character
     /// <summary>
     /// Gets the current status effects.
     /// </summary>
-    public StatusList StatusList => new(this.Struct->GetStatusManager);
+    public StatusList StatusList { get; private set; }
 
     /// <summary>
     /// Gets a value indicating whether the chara is currently casting.
@@ -78,4 +81,15 @@ public unsafe class BattleChara : Character
     /// Gets the underlying structure.
     /// </summary>
     protected internal new FFXIVClientStructs.FFXIV.Client.Game.Character.BattleChara* Struct => (FFXIVClientStructs.FFXIV.Client.Game.Character.BattleChara*)this.Address;
+
+    /// <inheritdoc />
+    protected override void OnAddressChange(nint newAdress)
+    {
+        if (newAdress == nint.Zero) return;
+
+        if (this.StatusList == null)
+            this.StatusList = new(this.Struct->GetStatusManager);
+        else
+            this.StatusList.Address = (nint)this.Struct->GetStatusManager;
+    }
 }

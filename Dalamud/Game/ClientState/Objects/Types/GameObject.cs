@@ -17,6 +17,8 @@ public unsafe partial class GameObject : IEquatable<GameObject>
     /// </summary>
     public const uint InvalidGameObjectId = 0xE0000000;
 
+    private nint address;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="GameObject"/> class.
     /// </summary>
@@ -29,7 +31,18 @@ public unsafe partial class GameObject : IEquatable<GameObject>
     /// <summary>
     /// Gets the address of the game object in memory.
     /// </summary>
-    public IntPtr Address { get; internal set; }
+    public IntPtr Address
+    {
+        get => this.address;
+        internal set
+        {
+            if (this.address != value)
+            {
+                this.address = value;
+                this.OnAddressChange(this.address);
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the Dalamud instance.
@@ -86,6 +99,14 @@ public unsafe partial class GameObject : IEquatable<GameObject>
 
     /// <inheritdoc/>
     public override int GetHashCode() => this.ObjectId.GetHashCode();
+
+    /// <summary>
+    /// Called when the GameObject address changes.
+    /// </summary>
+    /// <param name="newAdress">The new address the GameObject changed to</param>
+    protected virtual void OnAddressChange(nint newAdress)
+    {
+    }
 }
 
 /// <summary>

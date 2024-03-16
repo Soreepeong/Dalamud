@@ -118,20 +118,7 @@ internal sealed partial class ObjectTable : IServiceType, IObjectTable
         if (address == nint.Zero)
             return null;
 
-        var obj = (CSGameObject*)address;
-        var objKind = (ObjectKind)obj->ObjectKind;
-        return objKind switch
-        {
-            ObjectKind.Player => new PlayerCharacter(address),
-            ObjectKind.BattleNpc => new BattleNpc(address),
-            ObjectKind.EventNpc => new Npc(address),
-            ObjectKind.Retainer => new Npc(address),
-            ObjectKind.EventObj => new EventObj(address),
-            ObjectKind.Companion => new Npc(address),
-            ObjectKind.MountType => new Npc(address),
-            ObjectKind.Ornament => new Npc(address),
-            _ => new GameObject(address),
-        };
+        return this.cachedObjectTable[((CSGameObject*)address)->ObjectIndex].Update();
     }
 
     [Api10ToDo("Use ThreadSafety.AssertMainThread() instead of this.")]
