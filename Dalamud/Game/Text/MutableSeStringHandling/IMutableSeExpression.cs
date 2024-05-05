@@ -13,14 +13,31 @@ public interface IMutableSeExpression
     /// <summary>Gets the marker byte for this expression.</summary>
     byte Marker { get; }
 
+    /// <summary>Evaluates the expression as a boolean value.</summary>
+    /// <param name="context">The evaluation context.</param>
+    /// <returns>The evaluated value.</returns>
     bool EvaluateAsBool(ISeStringEvaluationContext context);
 
+    /// <summary>Evaluates the expression as an integer value.</summary>
+    /// <param name="context">The evaluation context.</param>
+    /// <returns>The evaluated value.</returns>
     int EvaluateAsInt(ISeStringEvaluationContext context);
 
+    /// <summary>Evaluates the expression as an unsigned integer value.</summary>
+    /// <param name="context">The evaluation context.</param>
+    /// <returns>The evaluated value.</returns>
     uint EvaluateAsUInt(ISeStringEvaluationContext context);
 
+    /// <summary>Evaluates the expression to a SeString builder.</summary>
+    /// <param name="context">The evaluation context.</param>
+    /// <param name="ssb">The target SeString builder.</param>
     void EvaluateToSeStringBuilder(ISeStringEvaluationContext context, SeStringBuilder ssb);
 
+    /// <summary>Evaluates the expression to a byte span.</summary>
+    /// <param name="context">The evaluation context.</param>
+    /// <param name="span">The target span.</param>
+    /// <param name="bytesWritten">Number of bytes written. Meaningful only if <c>true</c> is returned.</param>
+    /// <returns><c>true</c> if evaluated data is fully written to <paramref name="span"/>.</returns>
     bool EvaluateToSpan(ISeStringEvaluationContext context, Span<byte> span, out int bytesWritten);
 
     /// <summary>Calculates the number of bytes required to encode this expression.</summary>
