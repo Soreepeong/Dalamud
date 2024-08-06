@@ -9,12 +9,8 @@ using System.Text.Unicode;
 
 using Dalamud.Configuration.Internal;
 using Dalamud.Game.ClientState.Keys;
-using Dalamud.Game.Text.SeStringHandling.Payloads;
-using Dalamud.Interface.ImGuiSeStringRenderer;
-using Dalamud.Interface.ImGuiSeStringRenderer.Internal;
 using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface.ManagedFontAtlas.Internals;
-using Dalamud.Interface.Utility.Raii;
 
 using ImGuiNET;
 using ImGuiScene;
@@ -24,7 +20,7 @@ namespace Dalamud.Interface.Utility;
 /// <summary>
 /// Class containing various helper methods for use with ImGui inside Dalamud.
 /// </summary>
-public static class ImGuiHelpers
+public static partial class ImGuiHelpers
 {
     /// <summary>
     /// Gets the main viewport.
@@ -161,76 +157,6 @@ public static class ImGuiHelpers
     /// <param name="text">Text in the button.</param>
     /// <returns><see cref="Vector2"/> with the size of the button.</returns>
     public static Vector2 GetButtonSize(string text) => ImGui.CalcTextSize(text) + (ImGui.GetStyle().FramePadding * 2);
-
-    /// <summary>
-    /// Print out text that can be copied when clicked.
-    /// </summary>
-    /// <param name="text">The text to show.</param>
-    /// <param name="textCopy">The text to copy when clicked.</param>
-    public static void ClickToCopyText(string text, string? textCopy = null)
-    {
-        textCopy ??= text;
-        ImGui.Text($"{text}");
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-            if (textCopy != text) ImGui.SetTooltip(textCopy);
-        }
-
-        if (ImGui.IsItemClicked()) ImGui.SetClipboardText($"{textCopy}");
-    }
-
-    /// <summary>Draws a SeString.</summary>
-    /// <param name="sss">SeString to draw.</param>
-    /// <param name="style">Initial rendering style.</param>
-    /// <param name="imGuiId">ImGui ID, if link functionality is desired.</param>
-    /// <param name="buttonFlags">Button flags to use on link interaction.</param>
-    /// <returns>Interaction result of the rendered text.</returns>
-    /// <remarks>This function is experimental. Report any issues to GitHub issues or to Discord #dalamud-dev channel.
-    /// The function definition is stable; only in the next API version a function may be removed.</remarks>
-    [Experimental("SeStringRenderer")]
-    public static SeStringDrawResult SeStringWrapped(
-        ReadOnlySpan<byte> sss,
-        scoped in SeStringDrawParams style = default,
-        ImGuiId imGuiId = default,
-        ImGuiButtonFlags buttonFlags = ImGuiButtonFlags.MouseButtonDefault) =>
-        Service<SeStringRenderer>.Get().Draw(sss, style, imGuiId, buttonFlags);
-
-    /// <summary>Creates and caches a SeString from a text macro representation, and then draws it.</summary>
-    /// <param name="text">SeString text macro representation.
-    /// Newline characters will be normalized to <see cref="NewLinePayload"/>.</param>
-    /// <param name="style">Initial rendering style.</param>
-    /// <param name="imGuiId">ImGui ID, if link functionality is desired.</param>
-    /// <param name="buttonFlags">Button flags to use on link interaction.</param>
-    /// <returns>Interaction result of the rendered text.</returns>
-    /// <remarks>This function is experimental. Report any issues to GitHub issues or to Discord #dalamud-dev channel.
-    /// The function definition is stable; only in the next API version a function may be removed.</remarks>
-    [Experimental("SeStringRenderer")]
-    public static SeStringDrawResult CompileSeStringWrapped(
-        string text,
-        scoped in SeStringDrawParams style = default,
-        ImGuiId imGuiId = default,
-        ImGuiButtonFlags buttonFlags = ImGuiButtonFlags.MouseButtonDefault) =>
-        Service<SeStringRenderer>.Get().CompileAndDrawWrapped(text, style, imGuiId, buttonFlags);
-
-    /// <summary>
-    /// Write unformatted text wrapped.
-    /// </summary>
-    /// <param name="text">The text to write.</param>
-    public static void SafeTextWrapped(string text) => ImGui.TextWrapped(text.Replace("%", "%%"));
-
-    /// <summary>
-    /// Write unformatted text wrapped.
-    /// </summary>
-    /// <param name="color">The color of the text.</param>
-    /// <param name="text">The text to write.</param>
-    public static void SafeTextColoredWrapped(Vector4 color, string text)
-    {
-        using (ImRaii.PushColor(ImGuiCol.Text, color))
-        {
-            ImGui.TextWrapped(text.Replace("%", "%%"));
-        }
-    }
 
     /// <summary>
     /// Unscales fonts after they have been rendered onto atlas.
